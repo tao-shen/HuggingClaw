@@ -327,7 +327,7 @@ class OpenClawFullSync:
                 "mode": "local",
                 "bind": "lan",
                 "port": 7860,
-                "auth": {"token": "openclaw-space-default"},
+                "auth": False,
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
                     "allowInsecureAuth": True,
@@ -475,14 +475,11 @@ class OpenClawFullSync:
             print(f"[SYNC] Setting OPENROUTER_API_KEY environment variable")
         else:
             print(f"[SYNC] WARNING: OPENROUTER_API_KEY not set, LLM features may not work")
-        env["OPENCLAW_GATEWAY_TOKEN"] = "openclaw-space-default"
-        print(f"[SYNC] Setting OPENCLAW_GATEWAY_TOKEN environment variable")
-
         try:
             # Use Popen without shell to avoid pipe issues
-            # Pass --token to bypass the auth token check
+            # auth disabled in config — no token needed
             process = subprocess.Popen(
-                ["node", "dist/entry.js", "gateway", "--token", "openclaw-space-default"],
+                ["node", "dist/entry.js", "gateway"],
                 cwd=str(APP_DIR),
                 stdout=subprocess.PIPE,  # Capture so we can log it
                 stderr=subprocess.STDOUT,
