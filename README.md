@@ -11,7 +11,7 @@ app_port: 7860
 ---
 
 <div align="center">
-  <img src="assets/architecture.svg" alt="HuggingClaw Architecture" width="720"/>
+  <img src="HuggingClaw.png" alt="HuggingClaw" width="720"/>
   <br/><br/>
   <strong>The easiest way to deploy <a href="https://github.com/openclaw/openclaw">OpenClaw</a> on the cloud</strong>
   <br/>
