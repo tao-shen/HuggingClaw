@@ -55,6 +55,12 @@ if [ -x /home/node/scripts/inject-token.sh ]; then
 fi
 echo "[TIMER] Token inject: $(($(date +%s) - INJECT_START))s"
 
+# ── Set version from build artifact ────────────────────────────────────────
+if [ -f /app/openclaw/.version ]; then
+  export OPENCLAW_VERSION=$(cat /app/openclaw/.version)
+  echo "[entrypoint] OpenClaw version: $OPENCLAW_VERSION"
+fi
+
 # ── Start OpenClaw via sync_hf.py (don't wait for DNS — it runs in bg) ─────
 echo "[entrypoint] Starting OpenClaw via sync_hf.py..."
 echo "[entrypoint] DNS resolution running in background (PID $DNS_PID), app will use it when ready"

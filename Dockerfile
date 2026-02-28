@@ -48,6 +48,8 @@ RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
   && test -d extensions/whatsapp && echo "[build] OK extensions/whatsapp" \
   && test -d dist/control-ui && echo "[build] OK dist/control-ui" \
   && mkdir -p /app/openclaw/empty-bundled-plugins \
+  && node -e "console.log(require('./package.json').version)" > /app/openclaw/.version \
+  && echo "[build] version: $(cat /app/openclaw/.version)" \
   && echo "[build][layer2] Total clone+install+build: $(($(date +%s) - START))s"
 
 # ── Layer 3 (node): Scripts + Config + Token 注入 ─────────────────────────────
