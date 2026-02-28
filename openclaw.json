@@ -12,8 +12,7 @@
       "dangerouslyDisableDeviceAuth": true,
       "allowedOrigins": [
         "https://huggingface.co",
-        "https://*.hf.space",
-        "https://tao-shen-huggingclaw.hf.space"
+        "https://*.hf.space"
       ]
     }
   },

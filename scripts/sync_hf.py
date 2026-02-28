@@ -57,15 +57,23 @@ APP_DIR       = Path("/app/openclaw")
 # Use ".openclaw" - directly read/write the .openclaw folder in dataset
 DATASET_PATH = ".openclaw"
 
+# Telegram credentials (backward-compatible; prefer configuring via Control UI)
 TELEGRAM_BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_BOT_NAME   = os.environ.get("TELEGRAM_BOT_NAME", "")
 TELEGRAM_ALLOW_USER = os.environ.get("TELEGRAM_ALLOW_USER", "")
 
-# OpenRouter API key for free models (must be set via environment variable)
+# OpenRouter API key for LLM access
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 # Gateway password (override via HF Secret OPENCLAW_PASSWORD)
 OPENCLAW_PASSWORD = os.environ.get("OPENCLAW_PASSWORD", "huggingclaw")
+
+# Default model for new conversations
+OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL", "openrouter/stepfun/step-3.5-flash:free")
+
+# HF Spaces built-in env vars (auto-set by HF runtime)
+SPACE_HOST = os.environ.get("SPACE_HOST", "")   # e.g. "tao-shen-huggingclaw.hf.space"
+SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "120"))
 
@@ -334,6 +342,14 @@ class OpenClawFullSync:
             if not OPENCLAW_PASSWORD:
                 print("[SYNC] WARNING: OPENCLAW_PASSWORD not set! Gateway will auto-generate a random token.")
             auth = {"password": OPENCLAW_PASSWORD} if OPENCLAW_PASSWORD else {}
+            # Dynamic allowedOrigins from SPACE_HOST (auto-set by HF runtime)
+            allowed_origins = [
+                "https://huggingface.co",
+                "https://*.hf.space",
+            ]
+            if SPACE_HOST:
+                allowed_origins.append(f"https://{SPACE_HOST}")
+                print(f"[SYNC] SPACE_HOST detected: {SPACE_HOST}")
             data["gateway"] = {
                 "mode": "local",
                 "bind": "lan",
@@ -343,14 +359,10 @@ class OpenClawFullSync:
                 "controlUi": {
                     "allowInsecureAuth": True,
                     "dangerouslyDisableDeviceAuth": True,
-                    "allowedOrigins": [
-                        "https://huggingface.co",
-                        "https://*.hf.space",
-                        "https://tao-shen-huggingclaw.hf.space"
-                    ]
+                    "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (auth={'password' if OPENCLAW_PASSWORD else 'auto-generated'}, trustedProxies=all)")
+            print(f"[SYNC] Set gateway config (auth={'password' if OPENCLAW_PASSWORD else 'auto-generated'}, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
@@ -372,7 +384,7 @@ class OpenClawFullSync:
                 print("[SYNC] WARNING: OPENROUTER_API_KEY not set, skipping provider config")
             # Remove old gemini provider if present
             data["models"]["providers"].pop("gemini", None)
-            data["agents"]["defaults"]["model"]["primary"] = "openrouter/stepfun/step-3.5-flash:free"
+            data["agents"]["defaults"]["model"]["primary"] = OPENCLAW_DEFAULT_MODEL
 
             # Plugin whitelist (only load telegram + whatsapp to speed up startup)
             data.setdefault("plugins", {}).setdefault("entries", {})
