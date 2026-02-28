@@ -1,0 +1,27 @@
+--- a/src/web/inbound/monitor.ts
++++ b/src/web/inbound/monitor.ts
+@@ -155,11 +155,6 @@ export async function monitorWebInbox(options: {
+       return;
+     }
+     for (const msg of upsert.messages ?? []) {
+-      recordChannelActivity({
+-        channel: "whatsapp",
+-        accountId: options.accountId,
+-        direction: "inbound",
+-      });
+       const id = msg.key?.id ?? undefined;
+       const remoteJid = msg.key?.remoteJid;
+       if (!remoteJid) {
+@@ -328,6 +323,11 @@ export async function monitorWebInbox(options: {
+         mediaPath,
+         mediaType,
+         mediaFileName,
+       };
++      recordChannelActivity({
++        channel: "whatsapp",
++        accountId: options.accountId,
++        direction: "inbound",
++      });
+       try {
+         const task = Promise.resolve(debouncer.enqueue(inboundMessage));
+         void task.catch((err) => {

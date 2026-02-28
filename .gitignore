@@ -1,0 +1,11 @@
+# 环境与密钥
+.env
+.env.local
+*.pem
+
+# 依赖与构建
+node_modules/
+
+# 日志与临时
+*.log
+.DS_Store

@@ -1,0 +1,1 @@
+huggingface_hub>=0.24.5 # Force rebuild 2026-02-11

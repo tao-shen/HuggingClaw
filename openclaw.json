@@ -1,0 +1,58 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 7860,
+    "auth": {
+      "token": "openclaw-space-default"
+    },
+    "trustedProxies": [
+      "0.0.0.0/0"
+    ],
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "allowedOrigins": [
+        "https://huggingface.co"
+      ]
+    }
+  },
+  "session": { "scope": "global" },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "apiKey": "${OPENROUTER_API_KEY}",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "stepfun/step-3.5-flash:free",
+            "name": "Step-3.5-Flash (Free)"
+          },
+          {
+            "id": "deepseek/deepseek-chat:free",
+            "name": "DeepSeek V3 (Free)"
+          }
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      },
+      "whatsapp": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace",
+      "model": {
+        "primary": "openrouter/stepfun/step-3.5-flash:free"
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 7860,
+    "auth": { "token": "openclaw-space-default" },
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "allowedOrigins": [
+        "https://huggingface.co"
+      ]
+    }
+  },
+  "session": { "scope": "global" },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "zhipu": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "apiKey": "${ZHIPU_API_KEY}",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "glm-4-plus",
+            "name": "GLM-4 Plus"
+          },
+          {
+            "id": "glm-4-flash",
+            "name": "GLM-4 Flash"
+          }
+        ]
+      },
+      "hf": {
+        "baseUrl": "https://router.huggingface.co/v1",
+        "apiKey": "${HF_TOKEN}",
+        "api": "openai-completions",
+        "models": [
+          { "id": "Qwen/Qwen2.5-7B-Instruct", "name": "Qwen2.5 7B (HF Router)" }
+        ]
+      }
+    }
+  },
+  "plugins": { "entries": { "whatsapp": { "enabled": true } } },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace",
+      "model": {
+        "primary": "zhipu/glm-4-flash"
+      }
+    }
+  }
+}
