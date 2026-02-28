@@ -1,69 +1,122 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 280" font-family="'Segoe UI',system-ui,-apple-system,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" font-family="'Segoe UI',system-ui,-apple-system,sans-serif">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#1a0a00"/>
-      <stop offset="100%" stop-color="#1a0800"/>
+      <stop offset="100%" stop-color="#160500"/>
     </linearGradient>
-    <marker id="arrowY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
-    </marker>
-    <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#4ade80"/>
-    </marker>
+    <linearGradient id="redGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ef0011"/>
+      <stop offset="100%" stop-color="#ba000d"/>
+    </linearGradient>
+    <linearGradient id="yellowGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
     <filter id="glow">
       <feGaussianBlur stdDeviation="2" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ef0011"/>
+    </marker>
+    <marker id="arrowYellow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fb923c"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4ade80"/>
+    </marker>
   </defs>
 
   <!-- Background -->
-  <rect width="600" height="280" rx="12" fill="url(#bg)"/>
+  <rect width="840" height="420" rx="16" fill="url(#bgGrad)"/>
 
-  <!-- ═══════════════════════════════ -->
-  <!-- OPENCLAW ENGINE (red, top)     -->
-  <!-- ═══════════════════════════════ -->
-  <rect x="150" y="20" width="300" height="80" rx="12" fill="#1a0505" stroke="#ef0011" stroke-width="1.8"/>
-  <rect x="160" y="20" width="280" height="3" rx="1.5" fill="#ef0011" opacity="0.5"/>
-  <text x="300" y="52" text-anchor="middle" fill="#ef0011" font-size="18" font-weight="700">OpenClaw</text>
-  <text x="300" y="72" text-anchor="middle" fill="#8b3030" font-size="10">AI Assistant Engine · Node.js</text>
-  <text x="300" y="88" text-anchor="middle" fill="#5a2020" font-size="9">Conversations · Plugins · Agents · Memory</text>
+  <!-- ══ HuggingFace Cloud boundary ══ -->
+  <rect x="185" y="20" width="470" height="340" rx="14" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8,5" opacity="0.5"/>
+  <circle cx="215" cy="37" r="10" fill="#fbbf24" opacity="0.15"/>
+  <text x="215" y="41" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700">HF</text>
+  <text x="240" y="41" fill="#fbbf24" font-size="12" font-weight="600" letter-spacing="1" opacity="0.9">HUGGINGFACE SPACE</text>
 
-  <!-- Arrows down -->
-  <line x1="210" y1="100" x2="210" y2="140" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowY)" filter="url(#glow)"/>
-  <text x="195" y="125" text-anchor="end" fill="#a3842c" font-size="8">runs on</text>
+  <!-- Docker Container -->
+  <rect x="215" y="55" width="410" height="290" rx="10" fill="#1a0808" stroke="#5c3c10" stroke-width="1.2"/>
+  <rect x="215" y="55" width="410" height="24" rx="10" fill="#1e1208"/>
+  <rect x="215" y="68" width="410" height="1" fill="#1e1208"/>
+  <circle cx="232" cy="67" r="4" fill="#f87171" opacity="0.7"/>
+  <circle cx="245" cy="67" r="4" fill="#fbbf24" opacity="0.7"/>
+  <circle cx="258" cy="67" r="4" fill="#4ade80" opacity="0.7"/>
+  <text x="310" y="71" fill="#8b7020" font-size="10">Docker Container</text>
 
-  <line x1="390" y1="100" x2="390" y2="140" stroke="#4ade80" stroke-width="2" marker-end="url(#arrowG)" filter="url(#glow)"/>
-  <text x="405" y="125" fill="#4ade80" font-size="8" opacity="0.7">syncs to</text>
+  <!-- OpenClaw Engine box -->
+  <rect x="235" y="90" width="370" height="90" rx="8" fill="#1a0505" stroke="#ef0011" stroke-width="1.5" opacity="0.9"/>
+  <rect x="245" y="90" width="350" height="3" rx="1.5" fill="url(#redGrad)" opacity="0.5"/>
+  <text x="420" y="116" text-anchor="middle" fill="#ef0011" font-size="15" font-weight="700">OpenClaw Engine</text>
+  <!-- Sub-modules -->
+  <rect x="250" y="125" width="100" height="44" rx="6" fill="url(#redGrad)" opacity="0.3"/>
+  <text x="300" y="145" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">Control UI</text>
+  <text x="300" y="160" text-anchor="middle" fill="#b91c1c" font-size="9">Web Dashboard</text>
 
-  <!-- ═══════════════════════════════ -->
-  <!-- HF SPACE (yellow, bottom left) -->
-  <!-- ═══════════════════════════════ -->
-  <rect x="30" y="148" width="260" height="90" rx="12" fill="#1a1200" stroke="#fbbf24" stroke-width="1.5"/>
-  <rect x="40" y="148" width="240" height="3" rx="1.5" fill="#fbbf24" opacity="0.4"/>
+  <rect x="362" y="125" width="100" height="44" rx="6" fill="url(#redGrad)" opacity="0.3"/>
+  <text x="412" y="145" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">Telegram</text>
+  <text x="412" y="160" text-anchor="middle" fill="#b91c1c" font-size="9">Bot Integration</text>
 
-  <circle cx="60" cy="175" r="10" fill="#fbbf24" opacity="0.15"/>
-  <text x="60" y="179" text-anchor="middle" fill="#fbbf24" font-size="9" font-weight="800">HF</text>
-  <text x="82" y="175" fill="#fbbf24" font-size="14" font-weight="700">HuggingFace Space</text>
-  <text x="82" y="193" fill="#a3842c" font-size="9">Docker Container · Free CPU Tier</text>
+  <rect x="474" y="125" width="116" height="44" rx="6" fill="url(#redGrad)" opacity="0.3"/>
+  <text x="532" y="145" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">WhatsApp</text>
+  <text x="532" y="160" text-anchor="middle" fill="#b91c1c" font-size="9">Messaging</text>
 
-  <text x="60" y="220" fill="#8b7020" font-size="8">2 vCPU · 16 GB RAM · HTTPS · Always Online</text>
+  <!-- Sync Service box -->
+  <rect x="235" y="197" width="175" height="50" rx="8" fill="#052e16" stroke="#22c55e" stroke-width="1.2" opacity="0.9"/>
+  <text x="322" y="220" text-anchor="middle" fill="#86efac" font-size="12" font-weight="600">Sync Service</text>
+  <text x="322" y="236" text-anchor="middle" fill="#4ade80" font-size="9" opacity="0.7">sync_hf.py</text>
 
-  <!-- ═══════════════════════════════════ -->
-  <!-- HF DATASET (yellow, bottom right)  -->
-  <!-- ═══════════════════════════════════ -->
-  <rect x="310" y="148" width="260" height="90" rx="12" fill="#1a1200" stroke="#fbbf24" stroke-width="1.5"/>
-  <rect x="320" y="148" width="240" height="3" rx="1.5" fill="#fbbf24" opacity="0.4"/>
+  <!-- DNS Resolver box -->
+  <rect x="425" y="197" width="175" height="50" rx="8" fill="#1c0f08" stroke="#fb923c" stroke-width="1.2" opacity="0.9"/>
+  <text x="512" y="220" text-anchor="middle" fill="#fdba74" font-size="12" font-weight="600">DNS Resolver</text>
+  <text x="512" y="236" text-anchor="middle" fill="#fb923c" font-size="9" opacity="0.7">dns-resolve.py</text>
 
-  <circle cx="340" cy="175" r="10" fill="#fbbf24" opacity="0.15"/>
-  <text x="340" y="179" text-anchor="middle" fill="#fbbf24" font-size="9" font-weight="800">HF</text>
-  <text x="362" y="175" fill="#fbbf24" font-size="14" font-weight="700">HF Dataset</text>
-  <text x="362" y="193" fill="#a3842c" font-size="9">Private Repo · Auto-Sync</text>
+  <!-- ══ Users (left) ══ -->
+  <rect x="20" y="90" width="140" height="130" rx="10" fill="#1e1208" stroke="#5c3c10" stroke-width="1.2"/>
+  <text x="90" y="115" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700">Users</text>
+  <line x1="45" y1="125" x2="135" y2="125" stroke="#5c3c10" stroke-width="0.8"/>
+  <text x="90" y="146" text-anchor="middle" fill="#a3842c" font-size="11">Web Browser</text>
+  <text x="90" y="167" text-anchor="middle" fill="#a3842c" font-size="11">Telegram</text>
+  <text x="90" y="188" text-anchor="middle" fill="#a3842c" font-size="11">WhatsApp</text>
+  <text x="90" y="209" text-anchor="middle" fill="#a3842c" font-size="11">API Client</text>
 
-  <text x="340" y="220" fill="#8b7020" font-size="8">Settings · Credentials · Conversations</text>
+  <!-- Arrow: Users → OpenClaw -->
+  <line x1="160" y1="145" x2="232" y2="135" stroke="#ef0011" stroke-width="2" marker-end="url(#arrowRed)" filter="url(#glow)"/>
 
-  <!-- Bidirectional hint -->
-  <line x1="290" y1="193" x2="310" y2="193" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,3" opacity="0.3"/>
+  <!-- ══ HF Dataset (right) ══ -->
+  <rect x="680" y="80" width="140" height="80" rx="10" fill="#1a1200" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="750" y="110" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700">HF Dataset</text>
+  <line x1="700" y1="118" x2="800" y2="118" stroke="#78350f" stroke-width="0.8"/>
+  <text x="750" y="137" text-anchor="middle" fill="#a3842c" font-size="10">Persistent Backup</text>
+  <text x="750" y="152" text-anchor="middle" fill="#a3842c" font-size="9">Private Repo</text>
 
-  <!-- Footer -->
-  <text x="300" y="268" text-anchor="middle" fill="#5c3c10" font-size="8" letter-spacing="1.5">ZERO HARDWARE · ALWAYS ONLINE · AUTO-PERSISTENT · ONE-CLICK DEPLOY</text>
+  <!-- Arrow: Sync ↔ Dataset -->
+  <line x1="412" y1="220" x2="678" y2="125" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrowYellow)" filter="url(#glow)"/>
+  <line x1="678" y1="135" x2="412" y2="228" stroke="#fbbf24" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrowYellow)" opacity="0.5"/>
+
+  <!-- ══ LLM Provider (right bottom) ══ -->
+  <rect x="680" y="190" width="140" height="80" rx="10" fill="#1c0f08" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="750" y="220" text-anchor="middle" fill="#fdba74" font-size="13" font-weight="700">LLM Provider</text>
+  <line x1="700" y1="228" x2="800" y2="228" stroke="#7c2d12" stroke-width="0.8"/>
+  <text x="750" y="245" text-anchor="middle" fill="#c2723c" font-size="10">OpenRouter API</text>
+  <text x="750" y="260" text-anchor="middle" fill="#c2723c" font-size="9">200+ Models</text>
+
+  <!-- Arrow: OpenClaw → LLM -->
+  <line x1="607" y1="155" x2="678" y2="215" stroke="#fb923c" stroke-width="1.8" marker-end="url(#arrowOrange)" filter="url(#glow)"/>
+
+  <!-- ══ Data labels ══ -->
+  <text x="300" y="290" text-anchor="middle" fill="#78350f" font-size="9">Conversations · Settings · Credentials</text>
+  <text x="560" y="290" text-anchor="middle" fill="#7c2d12" font-size="9">DeepSeek · Step · GPT · Claude · Gemini</text>
+
+  <!-- ══ Footer ══ -->
+  <text x="420" y="380" text-anchor="middle" fill="#5c3c10" font-size="10" letter-spacing="1.5">
+    ZERO HARDWARE  ·  ALWAYS ONLINE  ·  AUTO-PERSISTENT  ·  HTTPS BUILT-IN
+  </text>
+  <text x="420" y="400" text-anchor="middle" fill="#3d2508" font-size="10">
+    github.com/openclaw/openclaw  ·  MIT License
+  </text>
 </svg>

@@ -1,8 +1,8 @@
 ---
 title: HuggingClaw
-emoji: 🐾
-colorFrom: purple
-colorTo: blue
+emoji: 🔥
+colorFrom: yellow
+colorTo: red
 sdk: docker
 pinned: false
 license: mit
@@ -13,7 +13,7 @@ app_port: 7860
 <div align="center">
   <img src="HuggingClaw.png" alt="HuggingClaw" width="720"/>
   <br/><br/>
-  <strong>The easiest way to deploy <a href="https://github.com/openclaw/openclaw">OpenClaw</a> on the cloud</strong>
+  <strong>The best way to deploy <a href="https://github.com/openclaw/openclaw">OpenClaw</a> on the cloud</strong>
   <br/>
   <sub>Zero hardware · Always online · Auto-persistent · One-click deploy</sub>
   <br/><br/>
@@ -24,13 +24,15 @@ app_port: 7860
 
 ---
 
-## What is HuggingClaw?
+## Why HuggingClaw?
 
-[OpenClaw](https://github.com/openclaw/openclaw) is a self-hosted AI assistant platform with Telegram, WhatsApp integration and a web-based Control UI. It's powerful — but traditionally requires your own server.
+[OpenClaw](https://github.com/openclaw/openclaw) is a powerful self-hosted AI assistant platform supporting Telegram, WhatsApp, and 40+ messaging channels. But running it requires a server — and not everyone has a Mac Mini or spare hardware sitting around.
 
-**HuggingClaw** solves this by packaging OpenClaw for **one-click cloud deployment** on HuggingFace Spaces. No server, no GPU, no DevOps — just fork, configure secrets, and go.
+Cloud hosting is an option, but most providers charge by the hour, and OpenClaw's Node.js runtime needs real resources (it runs comfortably at ~16 GB RAM). That rules out most free tiers.
 
-### Why HuggingFace Spaces?
+**HuggingFace Spaces** offers the perfect fit: free CPU instances with 2 vCPU and 16 GB RAM, always-on HTTPS, and zero maintenance. There's just one catch — Space containers are **ephemeral**. Every restart wipes your data.
+
+**HuggingClaw** solves this by using a private **HuggingFace Dataset** repo as persistent storage. Your conversations, credentials, and settings are automatically synced on a schedule, and restored on every cold start. You get all the benefits of free cloud hosting with none of the data loss.
 
 | Feature | Detail |
 |---------|--------|
@@ -39,6 +41,12 @@ app_port: 7860
 | **Auto-persistent** | Syncs data to a private HF Dataset repo on schedule |
 | **HTTPS built-in** | Secure WebSocket connections out of the box |
 | **One-click deploy** | Fork → set secrets → done |
+
+## Architecture
+
+<div align="center">
+  <img src="assets/architecture.svg" alt="Architecture" width="720"/>
+</div>
 
 ## Quick Start
 
@@ -82,45 +90,6 @@ For local development, copy the template and fill in your values:
 ```bash
 cp .env.example .env
 # Edit .env with your values
-```
-
-## Architecture
-
-```
-HuggingFace Space (Docker)
-│
-├── OpenClaw Engine (Node.js)
-│   ├── Control UI ─────── Web dashboard (port 7860)
-│   ├── Telegram Plugin ── Bot integration
-│   ├── WhatsApp Plugin ── Messaging integration
-│   └── Agent Workflows ── AI assistants
-│
-├── Sync Service (sync_hf.py)
-│   └── Auto-backup ~/.openclaw ↔ HF Dataset repo
-│
-├── DNS Resolver (dns-resolve.py)
-│   └── Pre-resolve WhatsApp domains via DoH
-│
-└── Entrypoint (entrypoint.sh)
-    └── Orchestrate startup sequence
-```
-
-**Data flow:**
-
-```
-Users (Browser/Telegram/WhatsApp)
-          │
-          ▼
-   ┌─────────────┐     ┌───────────────┐
-   │   OpenClaw   │────▶│  LLM Provider  │
-   │   Engine     │◀────│  (OpenRouter)  │
-   └──────┬──────┘     └───────────────┘
-          │
-          ▼
-   ┌─────────────┐     ┌───────────────┐
-   │    Sync      │────▶│  HF Dataset    │
-   │   Service    │◀────│  (Backup)      │
-   └─────────────┘     └───────────────┘
 ```
 
 ## Local Development
