@@ -62,20 +62,27 @@ TELEGRAM_BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_BOT_NAME   = os.environ.get("TELEGRAM_BOT_NAME", "")
 TELEGRAM_ALLOW_USER = os.environ.get("TELEGRAM_ALLOW_USER", "")
 
-# OpenRouter API key for LLM access
+# OpenAI-compatible API (OpenAI, OpenRouter, or any compatible endpoint)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+# OpenRouter API key (optional; alternative to OPENAI_API_KEY + OPENAI_BASE_URL)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 # Gateway password (override via HF Secret OPENCLAW_PASSWORD)
 OPENCLAW_PASSWORD = os.environ.get("OPENCLAW_PASSWORD", "huggingclaw")
 
-# Default model for new conversations
-OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL", "openrouter/stepfun/step-3.5-flash:free")
+# Default model for new conversations (infer from provider if not set)
+OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
+    "openai/gpt-4o-mini" if OPENAI_API_KEY else "openrouter/stepfun/step-3.5-flash:free"
+)
 
 # HF Spaces built-in env vars (auto-set by HF runtime)
 SPACE_HOST = os.environ.get("SPACE_HOST", "")   # e.g. "tao-shen-huggingclaw.hf.space"
 SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "120"))
+AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "true").lower() in ("true", "1", "yes")
 
 # Setup logging
 log_dir = OPENCLAW_HOME / "workspace"
@@ -107,12 +114,17 @@ class OpenClawFullSync:
     # ── Repo management ────────────────────────────────────────────────
 
     def _ensure_repo_exists(self):
-        """Check if dataset repo exists; auto-create if not."""
+        """Check if dataset repo exists; auto-create if AUTO_CREATE_DATASET is enabled."""
         try:
             self.api.repo_info(repo_id=HF_REPO_ID, repo_type="dataset")
             print(f"[SYNC] Dataset repo found: {HF_REPO_ID}")
             return True
         except Exception:
+            if not AUTO_CREATE_DATASET:
+                print(f"[SYNC] Dataset repo NOT found: {HF_REPO_ID}")
+                print(f"[SYNC] AUTO_CREATE_DATASET is disabled. Please create the dataset repo manually.")
+                print(f"[SYNC]   → https://huggingface.co/new-dataset")
+                return False
             print(f"[SYNC] Dataset repo NOT found: {HF_REPO_ID} - creating...")
             try:
                 self.api.create_repo(
@@ -273,12 +285,17 @@ class OpenClawFullSync:
                 if "gateway" in cfg and "auth" in cfg["gateway"]:
                     if cfg["gateway"]["auth"].get("password") == "__OPENCLAW_PASSWORD__":
                         cfg["gateway"]["auth"]["password"] = OPENCLAW_PASSWORD
+                if OPENAI_API_KEY and "models" in cfg and "providers" in cfg["models"] and "openai" in cfg["models"]["providers"]:
+                    cfg["models"]["providers"]["openai"]["apiKey"] = OPENAI_API_KEY
+                    if OPENAI_BASE_URL:
+                        cfg["models"]["providers"]["openai"]["baseUrl"] = OPENAI_BASE_URL
+                elif "models" in cfg and "providers" in cfg["models"]:
+                    if not OPENAI_API_KEY:
+                        cfg["models"]["providers"].pop("openai", None)
                 if OPENROUTER_API_KEY:
-                    # Replace placeholder with actual key
                     if "models" in cfg and "providers" in cfg["models"] and "openrouter" in cfg["models"]["providers"]:
                         cfg["models"]["providers"]["openrouter"]["apiKey"] = OPENROUTER_API_KEY
                 else:
-                    # No API key: remove provider entirely to avoid config validation error
                     if "models" in cfg and "providers" in cfg["models"]:
                         cfg["models"]["providers"].pop("openrouter", None)
                     print("[SYNC] No OPENROUTER_API_KEY — removed openrouter provider from config")
@@ -368,8 +385,16 @@ class OpenClawFullSync:
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
             data.setdefault("session", {})["scope"] = "global"
 
-            # Force OpenRouter provider
+            # OpenAI-compatible provider (OPENAI_API_KEY + optional OPENAI_BASE_URL)
             data.setdefault("models", {}).setdefault("providers", {})
+            if OPENAI_API_KEY:
+                data["models"]["providers"]["openai"] = {
+                    "baseUrl": OPENAI_BASE_URL,
+                    "apiKey": OPENAI_API_KEY,
+                    "api": "openai-completions",
+                }
+                print(f"[SYNC] Set OpenAI-compatible provider (baseUrl={OPENAI_BASE_URL})")
+            # OpenRouter provider (optional)
             if OPENROUTER_API_KEY:
                 data["models"]["providers"]["openrouter"] = {
                     "baseUrl": "https://openrouter.ai/api/v1",
@@ -380,9 +405,9 @@ class OpenClawFullSync:
                         {"id": "deepseek/deepseek-chat:free", "name": "DeepSeek V3 (Free)"}
                     ]
                 }
-            else:
-                print("[SYNC] WARNING: OPENROUTER_API_KEY not set, skipping provider config")
-            # Remove old gemini provider if present
+                print("[SYNC] Set OpenRouter provider")
+            if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
+                print("[SYNC] WARNING: No OPENAI_API_KEY or OPENROUTER_API_KEY set, LLM features may not work")
             data["models"]["providers"].pop("gemini", None)
             data["agents"]["defaults"]["model"]["primary"] = OPENCLAW_DEFAULT_MODEL
 
@@ -492,13 +517,15 @@ class OpenClawFullSync:
         # Open log file
         log_fh = open(log_file, "a")
 
-        # Prepare environment with required variables
+        # Prepare environment (all API keys passed through for OpenClaw)
         env = os.environ.copy()
+        if OPENAI_API_KEY:
+            env["OPENAI_API_KEY"] = OPENAI_API_KEY
+            env["OPENAI_BASE_URL"] = OPENAI_BASE_URL
         if OPENROUTER_API_KEY:
             env["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
-            print(f"[SYNC] Setting OPENROUTER_API_KEY environment variable")
-        else:
-            print(f"[SYNC] WARNING: OPENROUTER_API_KEY not set, LLM features may not work")
+        if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
+            print(f"[SYNC] WARNING: No OPENAI_API_KEY or OPENROUTER_API_KEY set, LLM features may not work")
         try:
             # Use Popen without shell to avoid pipe issues
             # auth disabled in config — no token needed

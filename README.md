@@ -8,6 +8,26 @@ pinned: false
 license: mit
 short_description: Deploy OpenClaw on HuggingFace Spaces
 app_port: 7860
+tags:
+  - chatbot
+  - llm
+  - openclaw
+  - ai-assistant
+  - whatsapp
+  - telegram
+  - text-generation
+  - openai-api
+  - huggingface-spaces
+  - docker
+  - deployment
+  - persistent-storage
+  - agents
+  - multi-channel
+  - openai-compatible
+  - free-tier
+  - one-click-deploy
+  - self-hosted
+  - messaging-bot
 ---
 
 <div align="center">
@@ -63,7 +83,11 @@ Go to **Settings → Repository secrets** and configure:
 | `OPENCLAW_PASSWORD` | Recommended | Password for the Control UI (default: `huggingclaw`) |
 | `HF_TOKEN` | **Required** | HF Access Token with write permission ([create one](https://huggingface.co/settings/tokens)) |
 | `OPENCLAW_DATASET_REPO` | **Required** | Dataset repo for backup, e.g. `your-name/openclaw-data` |
-| `OPENROUTER_API_KEY` | Recommended | [OpenRouter](https://openrouter.ai) API key for LLM access |
+| `OPENAI_API_KEY` | Recommended | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key for LLM |
+| `OPENROUTER_API_KEY` | Optional | [OpenRouter](https://openrouter.ai) API key (200+ models, free tier) |
+| `ANTHROPIC_API_KEY` | Optional | Anthropic Claude API key |
+| `GOOGLE_API_KEY` | Optional | Google / Gemini API key |
+| `OPENCLAW_DEFAULT_MODEL` | Optional | Default model, e.g. `openai/gpt-4o-mini` or `openrouter/deepseek/deepseek-chat:free` |
 
 > For the full list of environment variables, see [`.env.example`](.env.example).
 
@@ -80,8 +104,8 @@ HuggingClaw is configured entirely through **environment variables**. A fully do
 | Category | Variables | Purpose |
 |----------|-----------|---------|
 | **Security** | `OPENCLAW_PASSWORD` | Protect the Control UI with a password |
-| **Persistence** | `HF_TOKEN`, `OPENCLAW_DATASET_REPO`, `SYNC_INTERVAL` | Auto-backup to HF Dataset |
-| **LLM** | `OPENROUTER_API_KEY`, `OPENCLAW_DEFAULT_MODEL` | Power AI conversations |
+| **Persistence** | `HF_TOKEN`, `OPENCLAW_DATASET_REPO`, `AUTO_CREATE_DATASET`, `SYNC_INTERVAL` | Auto-backup to HF Dataset |
+| **LLM (OpenAI-compatible)** | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`, `COHERE_API_KEY`, `OPENCLAW_DEFAULT_MODEL` | Power AI conversations ([OpenClaw env reference](https://openclawdoc.com/docs/reference/environment-variables)) |
 | **Performance** | `NODE_MEMORY_LIMIT` | Tune Node.js memory usage |
 | **Locale** | `TZ` | Set timezone for logs |
 
