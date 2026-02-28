@@ -11,7 +11,7 @@ if [ ! -f "$INDEX_HTML" ]; then
 fi
 
 # Create the injection script
-INJECT_SCRIPT="<script>!function(){var K='openclaw.control.settings.v1';try{var s=JSON.parse(localStorage.getItem(K)||'{}');if(!s.token||s.token===''){s.token='${TOKEN}';localStorage.setItem(K,JSON.stringify(s))}}catch(e){}}()</script>"
+INJECT_SCRIPT="<script>!function(){var K='openclaw.control.settings.v1';try{var s=JSON.parse(localStorage.getItem(K)||'{}');s.token='${TOKEN}';localStorage.setItem(K,JSON.stringify(s))}catch(e){}}()</script>"
 
 # Use python3 for reliable string replacement (avoids sed delimiter issues)
 python3 -c "
