@@ -327,7 +327,7 @@ class OpenClawFullSync:
                 "mode": "local",
                 "bind": "lan",
                 "port": 7860,
-                "auth": {},
+                "auth": {"mode": "none"},
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
                     "allowInsecureAuth": True,

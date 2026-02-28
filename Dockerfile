@@ -27,10 +27,12 @@ RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
   && git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw \
   && echo "[build] git clone: $(($(date +%s) - START))s" \
   && cd openclaw \
-  && if [ -f /app/patches/web-inbound-record-activity-after-body.patch ]; then \
-       patch -p1 < /app/patches/web-inbound-record-activity-after-body.patch \
-       && echo "[build] patch applied"; \
-     fi \
+  && for p in /app/patches/*.patch; do \
+       if [ -f "$p" ]; then \
+         patch -p1 < "$p" \
+         && echo "[build] patch applied: $(basename $p)"; \
+       fi; \
+     done \
   && T1=$(date +%s) \
   && pnpm install --frozen-lockfile \
   && echo "[build] pnpm install: $(($(date +%s) - T1))s" \

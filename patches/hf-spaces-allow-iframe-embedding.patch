@@ -1,0 +1,27 @@
+diff --git a/src/gateway/control-ui-csp.ts b/src/gateway/control-ui-csp.ts
+index 8a7b56f..112b1c2 100644
+--- a/src/gateway/control-ui-csp.ts
++++ b/src/gateway/control-ui-csp.ts
+@@ -7,7 +7,7 @@ export function buildControlUiCspHeader(): string {
+     "default-src 'self'",
+     "base-uri 'none'",
+     "object-src 'none'",
+-    "frame-ancestors 'none'",
++    "frame-ancestors 'self' https://huggingface.co https://*.hf.space",
+     "script-src 'self'",
+     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+     "img-src 'self' data: https:",
+diff --git a/src/gateway/control-ui.ts b/src/gateway/control-ui.ts
+index ed7b733..7cc0ab9 100644
+--- a/src/gateway/control-ui.ts
++++ b/src/gateway/control-ui.ts
+@@ -98,7 +98,8 @@ type ControlUiAvatarMeta = {
+ };
+ 
+ function applyControlUiSecurityHeaders(res: ServerResponse) {
+-  res.setHeader("X-Frame-Options", "DENY");
++  // Allow embedding in HF Spaces iframes (X-Frame-Options removed, CSP frame-ancestors used instead)
++  // res.setHeader("X-Frame-Options", "DENY");
+   res.setHeader("Content-Security-Policy", buildControlUiCspHeader());
+   res.setHeader("X-Content-Type-Options", "nosniff");
+   res.setHeader("Referrer-Policy", "no-referrer");
