@@ -80,18 +80,22 @@ SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))
 AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "false").lower() in ("true", "1", "yes")
 
-# Dataset repo: user-specified, or auto-derived from Space ID / HF_TOKEN username
+# Dataset repo: always auto-derive from SPACE_ID when not explicitly set.
+# Format: {username}/{SpaceName}-data  (e.g. "tao-shen/HuggingClaw-data")
+# This ensures each duplicated Space gets its own dataset automatically.
 HF_REPO_ID = os.environ.get("OPENCLAW_DATASET_REPO", "")
-if not HF_REPO_ID and AUTO_CREATE_DATASET and HF_TOKEN:
+if not HF_REPO_ID and SPACE_ID:
+    # SPACE_ID = "username/SpaceName" → derive "username/SpaceName-data"
+    HF_REPO_ID = f"{SPACE_ID}-data"
+    print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived from SPACE_ID: {HF_REPO_ID}")
+elif not HF_REPO_ID and HF_TOKEN:
+    # Fallback: no SPACE_ID (local Docker), derive from HF_TOKEN username
     try:
         _api = HfApi(token=HF_TOKEN)
         _username = _api.whoami()["name"]
-        # Use Space repo name if available (e.g. "tao-shen/HuggingClaw" → "HuggingClaw")
-        # so each Space gets its own dataset (e.g. "tao-shen/HuggingClaw-data")
-        _space_name = SPACE_ID.split("/")[-1] if SPACE_ID else "HuggingClaw"
-        HF_REPO_ID = f"{_username}/{_space_name}-data"
-        print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived: {HF_REPO_ID}")
-        del _api, _username, _space_name
+        HF_REPO_ID = f"{_username}/HuggingClaw-data"
+        print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived from HF_TOKEN: {HF_REPO_ID}")
+        del _api, _username
     except Exception as e:
         print(f"[SYNC] WARNING: Could not derive username from HF_TOKEN: {e}")
         HF_REPO_ID = ""
