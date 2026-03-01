@@ -26,6 +26,9 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts
 # Enable Telegram API proxy (redirects fetch() to working mirror if needed)
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/telegram-proxy.cjs"
 
+# Auto-fill gateway token in Control UI (redirects "/" to "/?token=GATEWAY_TOKEN")
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/token-redirect.cjs"
+
 # ── Extensions symlink ──────────────────────────────────────────────────────
 SYMLINK_START=$(date +%s)
 if [ ! -L /home/node/.openclaw/extensions ]; then
