@@ -65,6 +65,8 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # OpenRouter API key (optional; alternative to OPENAI_API_KEY + OPENAI_BASE_URL)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
+# Gateway token (default: huggingclaw; override via GATEWAY_TOKEN env var)
+GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "huggingclaw")
 
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
@@ -427,7 +429,7 @@ class OpenClawFullSync:
                 "mode": "local",
                 "bind": "lan",
                 "port": 7860,
-                "auth": {"token": "huggingclaw"},
+                "auth": {"token": GATEWAY_TOKEN},
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
                     "allowInsecureAuth": True,
@@ -435,7 +437,7 @@ class OpenClawFullSync:
                     "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (auth=token:huggingclaw, origins={len(allowed_origins)})")
+            print(f"[SYNC] Set gateway config (auth=token:{GATEWAY_TOKEN}, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
