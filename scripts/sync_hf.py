@@ -143,11 +143,16 @@ def probe_telegram_api(bot_token: str, timeout: int = 10) -> str:
     print("[TELEGRAM] WARNING: All API bases failed! Telegram will not work.")
     return ""
 
+def _is_valid_bot_token(token: str) -> bool:
+    """Check if a string looks like a valid Telegram bot token (digits:alphanumeric)."""
+    return bool(re.match(r'^\d+:[A-Za-z0-9_-]+$', token))
+
+
 def get_telegram_bot_token() -> str:
     """Extract Telegram bot token from OpenClaw config or environment."""
     # 1. Environment variable
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if token:
+    if token and _is_valid_bot_token(token):
         return token
 
     # 2. From openclaw.json channels config
@@ -158,11 +163,11 @@ def get_telegram_bot_token() -> str:
                 cfg = json.load(f)
             # Check channels.telegram.botToken (single account)
             tg = cfg.get("channels", {}).get("telegram", {})
-            if tg.get("botToken"):
+            if tg.get("botToken") and _is_valid_bot_token(tg["botToken"]):
                 return tg["botToken"]
             # Check channels.telegram.accounts.*.botToken (multi account)
             for acc in tg.get("accounts", {}).values():
-                if isinstance(acc, dict) and acc.get("botToken"):
+                if isinstance(acc, dict) and acc.get("botToken") and _is_valid_bot_token(acc["botToken"]):
                     return acc["botToken"]
         except Exception:
             pass
@@ -523,7 +528,9 @@ class OpenClawFullSync:
                         else:
                             print("[TELEGRAM] Official API works — no override needed")
                 else:
-                    print("[TELEGRAM] No bot token found — skipping API probe")
+                    print("[TELEGRAM] No valid bot token found — skipping API probe")
+                    print("[TELEGRAM]   Set TELEGRAM_BOT_TOKEN env var or configure in Control UI")
+                    print("[TELEGRAM]   Token format: 123456789:ABCdefGHIjklMNO (digits:alphanumeric)")
 
             with open(config_path, "w") as f:
                 json.dump(data, f, indent=2)
