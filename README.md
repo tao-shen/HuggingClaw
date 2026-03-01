@@ -6,6 +6,8 @@ colorTo: red
 sdk: docker
 pinned: false
 license: mit
+datasets:
+  - tao-shen/HuggingClaw-data
 short_description: Deploy OpenClaw on HuggingFace Spaces
 app_port: 7860
 tags:
