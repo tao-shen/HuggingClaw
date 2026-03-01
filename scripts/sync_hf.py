@@ -49,7 +49,6 @@ class TeeLogger:
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-HF_REPO_ID = os.environ.get("OPENCLAW_DATASET_REPO", "")
 HF_TOKEN   = os.environ.get("HF_TOKEN")
 OPENCLAW_HOME = Path.home() / ".openclaw"
 APP_DIR       = Path("/app/openclaw")
@@ -79,6 +78,19 @@ SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))
 AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "false").lower() in ("true", "1", "yes")
 
+# Dataset repo: user-specified, or auto-derived from HF_TOKEN username
+HF_REPO_ID = os.environ.get("OPENCLAW_DATASET_REPO", "")
+if not HF_REPO_ID and AUTO_CREATE_DATASET and HF_TOKEN:
+    try:
+        _api = HfApi(token=HF_TOKEN)
+        _username = _api.whoami()["name"]
+        HF_REPO_ID = f"{_username}/HuggingClaw-data"
+        print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived: {HF_REPO_ID}")
+        del _api, _username
+    except Exception as e:
+        print(f"[SYNC] WARNING: Could not derive username from HF_TOKEN: {e}")
+        HF_REPO_ID = ""
+
 # Setup logging
 log_dir = OPENCLAW_HOME / "workspace"
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +111,9 @@ class OpenClawFullSync:
             print("[SYNC] WARNING: HF_TOKEN not set. Persistence disabled.")
             return
         if not HF_REPO_ID:
-            print("[SYNC] INFO: OPENCLAW_DATASET_REPO not set. Persistence disabled.")
+            print("[SYNC] INFO: OPENCLAW_DATASET_REPO not set and AUTO_CREATE_DATASET is disabled.")
+            print("[SYNC]   → Set OPENCLAW_DATASET_REPO, or set AUTO_CREATE_DATASET=true to auto-create.")
+            print("[SYNC] Persistence disabled.")
             return
 
         self.enabled = True

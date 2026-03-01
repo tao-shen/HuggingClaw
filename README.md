@@ -80,25 +80,45 @@ Go to **Settings → Repository secrets** and configure:
 |--------|:------:|-------------|---------|
 | `OPENCLAW_PASSWORD` | Recommended | Password for the Control UI (default: `huggingclaw`) | `my-secret-password` |
 | `HF_TOKEN` | **Required** | HF Access Token with write permission ([create one](https://huggingface.co/settings/tokens)) | `hf_AbCdEfGhIjKlMnOpQrStUvWxYz` |
-| `OPENCLAW_DATASET_REPO` | **Required** | Dataset repo for backup — format: `username/repo-name` | `tao-shen/HuggingClaw-data` |
+| `OPENCLAW_DATASET_REPO` | See below | Dataset repo for backup — format: `username/repo-name`. Required in manual mode; optional in auto mode (see [Data Persistence](#data-persistence)) | `tao-shen/HuggingClaw-data` |
 | `OPENAI_API_KEY` | Recommended | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key | `sk-proj-xxxxxxxxxxxx` |
 | `OPENROUTER_API_KEY` | Optional | [OpenRouter](https://openrouter.ai) API key (200+ models, free tier available) | `sk-or-v1-xxxxxxxxxxxx` |
 | `ANTHROPIC_API_KEY` | Optional | Anthropic Claude API key | `sk-ant-xxxxxxxxxxxx` |
 | `GOOGLE_API_KEY` | Optional | Google / Gemini API key | `AIzaSyXxXxXxXxXx` |
-| `OPENCLAW_DEFAULT_MODEL` | Optional | Default model for new conversations | `openrouter/openai/gpt-oss-20b:free` |
+| `OPENCLAW_DEFAULT_MODEL` | Optional | Default model for new conversations | `openai/gpt-oss-20b:free` |
+
+### Data Persistence
+
+HuggingClaw syncs `~/.openclaw` (conversations, settings, credentials) to a private HuggingFace Dataset repo so data survives restarts. There are two ways to set this up:
+
+**Option A — Manual mode (default, recommended)**
+
+1. Go to [huggingface.co/new-dataset](https://huggingface.co/new-dataset) and create a **private** Dataset repo (e.g. `your-name/HuggingClaw-data`)
+2. Set `OPENCLAW_DATASET_REPO` = `your-name/HuggingClaw-data` in your Space secrets
+3. Set `HF_TOKEN` with write permission
+4. Done — HuggingClaw will sync to this repo every 60 seconds
+
+**Option B — Auto mode**
+
+1. Set `AUTO_CREATE_DATASET` = `true` in your Space secrets
+2. Set `HF_TOKEN` with write permission
+3. (Optional) Set `OPENCLAW_DATASET_REPO` if you want a custom repo name
+4. On first startup, HuggingClaw automatically creates a **private** Dataset repo. If `OPENCLAW_DATASET_REPO` is not set, it derives the name from your HF token username: `your-username/HuggingClaw-data`
+
+> **Security note:** `AUTO_CREATE_DATASET` defaults to `false` — the system will not create repos on your behalf unless you explicitly opt in.
 
 ### Environment Variables
 
-In addition to the secrets above, HuggingClaw provides environment variables to fine-tune persistence and performance. Set these the same way — as **Repository Secrets** in HF Spaces, or in your `.env` file for local Docker.
+Fine-tune persistence and performance. Set these as **Repository Secrets** in HF Spaces, or in `.env` for local Docker.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTO_CREATE_DATASET` | `false` | **Auto-create the Dataset repo** if it doesn't exist. Default is `false` for security — you must [create the repo manually](https://huggingface.co/new-dataset) first. Set to `true` to let HuggingClaw automatically create a **private** Dataset repo (using the name from `OPENCLAW_DATASET_REPO`) on first startup. Accepted values: `true`, `1`, `yes` (enabled) / `false`, `0`, `no` (disabled). |
-| `SYNC_INTERVAL` | `60` | **Backup interval in seconds.** How often HuggingClaw syncs the `~/.openclaw` directory (conversations, settings, credentials) to the HuggingFace Dataset repo. Lower values mean less data loss on restart but more API calls. Recommended: `60`–`300`. |
-| `NODE_MEMORY_LIMIT` | `512` | **Node.js heap memory limit in MB.** HF free tier provides 16 GB RAM; the default 512 MB is enough for most cases. Increase if you run complex agent workflows or handle very large conversations. |
-| `TZ` | `UTC` | **Timezone** for log timestamps and scheduled tasks. Example: `Asia/Shanghai`, `America/New_York`. |
+| `AUTO_CREATE_DATASET` | `false` | **Auto-create the Dataset repo.** Default is `false` for security. Set to `true` to let HuggingClaw automatically create a **private** Dataset repo on first startup (and auto-derive the repo name from your `HF_TOKEN` if `OPENCLAW_DATASET_REPO` is not set). Accepted values: `true`, `1`, `yes` / `false`, `0`, `no`. |
+| `SYNC_INTERVAL` | `60` | **Backup interval in seconds.** How often HuggingClaw syncs `~/.openclaw` to the Dataset repo. Lower = safer but more API calls. Recommended: `60`–`300`. |
+| `NODE_MEMORY_LIMIT` | `512` | **Node.js heap memory limit in MB.** HF free tier provides 16 GB RAM; 512 MB is enough for most cases. Increase for complex agent workflows. |
+| `TZ` | `UTC` | **Timezone** for log timestamps. Example: `Asia/Shanghai`, `America/New_York`. |
 
-> For the full list of environment variables (including `OPENAI_BASE_URL`, `OLLAMA_HOST`, proxy settings, and more), see [`.env.example`](.env.example).
+> For the full list (including `OPENAI_BASE_URL`, `OLLAMA_HOST`, proxy settings, etc.), see [`.env.example`](.env.example).
 
 ### 3. Open the Control UI
 
