@@ -69,7 +69,7 @@ OPENCLAW_PASSWORD = os.environ.get("OPENCLAW_PASSWORD", "huggingclaw")
 
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
-    "openai/gpt-4o-mini" if OPENAI_API_KEY else "openrouter/openai/gpt-oss-20b:free"
+    "openai/gpt-5-nano" if OPENAI_API_KEY else "openrouter/openai/gpt-oss-20b:free"
 )
 
 # HF Spaces built-in env vars (auto-set by HF runtime)
