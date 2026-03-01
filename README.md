@@ -103,7 +103,7 @@ HuggingClaw syncs `~/.openclaw` (conversations, settings, credentials) to a priv
 1. Set `AUTO_CREATE_DATASET` = `true` in your Space secrets
 2. Set `HF_TOKEN` with write permission
 3. (Optional) Set `OPENCLAW_DATASET_REPO` if you want a custom repo name
-4. On first startup, HuggingClaw automatically creates a **private** Dataset repo. If `OPENCLAW_DATASET_REPO` is not set, it derives the name from your HF token username: `your-username/HuggingClaw-data`
+4. On first startup, HuggingClaw automatically creates a **private** Dataset repo. If `OPENCLAW_DATASET_REPO` is not set, it derives the name from your HF username + Space name: `your-username/SpaceName-data` (e.g. `tao-shen/HuggingClaw-data`). Each Space gets its own dataset, so duplicating a Space won't cause conflicts
 
 > **Security note:** `AUTO_CREATE_DATASET` defaults to `false` — the system will not create repos on your behalf unless you explicitly opt in.
 

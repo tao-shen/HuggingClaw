@@ -78,15 +78,18 @@ SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))
 AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "false").lower() in ("true", "1", "yes")
 
-# Dataset repo: user-specified, or auto-derived from HF_TOKEN username
+# Dataset repo: user-specified, or auto-derived from Space ID / HF_TOKEN username
 HF_REPO_ID = os.environ.get("OPENCLAW_DATASET_REPO", "")
 if not HF_REPO_ID and AUTO_CREATE_DATASET and HF_TOKEN:
     try:
         _api = HfApi(token=HF_TOKEN)
         _username = _api.whoami()["name"]
-        HF_REPO_ID = f"{_username}/HuggingClaw-data"
+        # Use Space repo name if available (e.g. "tao-shen/HuggingClaw" → "HuggingClaw")
+        # so each Space gets its own dataset (e.g. "tao-shen/HuggingClaw-data")
+        _space_name = SPACE_ID.split("/")[-1] if SPACE_ID else "HuggingClaw"
+        HF_REPO_ID = f"{_username}/{_space_name}-data"
         print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived: {HF_REPO_ID}")
-        del _api, _username
+        del _api, _username, _space_name
     except Exception as e:
         print(f"[SYNC] WARNING: Could not derive username from HF_TOKEN: {e}")
         HF_REPO_ID = ""
