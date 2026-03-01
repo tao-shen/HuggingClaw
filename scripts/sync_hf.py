@@ -69,7 +69,7 @@ OPENCLAW_PASSWORD = os.environ.get("OPENCLAW_PASSWORD", "huggingclaw")
 
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
-    "openai/gpt-4o-mini" if OPENAI_API_KEY else "openrouter/stepfun/step-3.5-flash:free"
+    "openai/gpt-4o-mini" if OPENAI_API_KEY else "openrouter/deepseek/deepseek-chat:free"
 )
 
 # HF Spaces built-in env vars (auto-set by HF runtime)
@@ -393,8 +393,8 @@ class OpenClawFullSync:
                     "apiKey": OPENROUTER_API_KEY,
                     "api": "openai-completions",
                     "models": [
-                        {"id": "stepfun/step-3.5-flash:free", "name": "Step-3.5-Flash (Free)"},
-                        {"id": "deepseek/deepseek-chat:free", "name": "DeepSeek V3 (Free)"}
+                        {"id": "deepseek/deepseek-chat:free", "name": "DeepSeek V3 (Free)"},
+                        {"id": "stepfun/step-3.5-flash:free", "name": "Step-3.5-Flash (Free)"}
                     ]
                 }
                 print("[SYNC] Set OpenRouter provider")

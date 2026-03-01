@@ -80,7 +80,7 @@ Go to **Settings → Repository secrets** and configure:
 |--------|:------:|-------------|
 | `OPENCLAW_PASSWORD` | Recommended | Password for the Control UI (default: `huggingclaw`) |
 | `HF_TOKEN` | **Required** | HF Access Token with write permission ([create one](https://huggingface.co/settings/tokens)) |
-| `OPENCLAW_DATASET_REPO` | **Required** | Dataset repo for backup, e.g. `your-name/openclaw-data` |
+| `OPENCLAW_DATASET_REPO` | **Required** | Dataset repo for backup, e.g. `your-name/HuggingClaw-data` |
 | `OPENAI_API_KEY` | Recommended | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key for LLM |
 | `OPENROUTER_API_KEY` | Optional | [OpenRouter](https://openrouter.ai) API key (200+ models, free tier) |
 | `ANTHROPIC_API_KEY` | Optional | Anthropic Claude API key |
