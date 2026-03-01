@@ -80,25 +80,33 @@ SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))
 AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "false").lower() in ("true", "1", "yes")
 
-# Dataset repo: always auto-derive from SPACE_ID when not explicitly set.
-# Format: {username}/{SpaceName}-data  (e.g. "tao-shen/HuggingClaw-data")
-# This ensures each duplicated Space gets its own dataset automatically.
-HF_REPO_ID = os.environ.get("OPENCLAW_DATASET_REPO", "")
-if not HF_REPO_ID and SPACE_ID:
-    # SPACE_ID = "username/SpaceName" → derive "username/SpaceName-data"
+# Dataset repo: always derive from SPACE_ID to ensure each Space uses its own dataset.
+# OPENCLAW_DATASET_REPO is only used as fallback when SPACE_ID is not available (local Docker).
+_user_repo = os.environ.get("OPENCLAW_DATASET_REPO", "")
+if SPACE_ID:
+    # Always use SPACE_ID — prevents duplicated Spaces from sharing the original's dataset
     HF_REPO_ID = f"{SPACE_ID}-data"
-    print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived from SPACE_ID: {HF_REPO_ID}")
-elif not HF_REPO_ID and HF_TOKEN:
+    if _user_repo and _user_repo != HF_REPO_ID:
+        print(f"[SYNC] NOTE: Ignoring OPENCLAW_DATASET_REPO={_user_repo} — using SPACE_ID-derived: {HF_REPO_ID}")
+    else:
+        print(f"[SYNC] Dataset repo auto-derived from SPACE_ID: {HF_REPO_ID}")
+elif _user_repo:
+    HF_REPO_ID = _user_repo
+    print(f"[SYNC] Using OPENCLAW_DATASET_REPO: {HF_REPO_ID}")
+elif HF_TOKEN:
     # Fallback: no SPACE_ID (local Docker), derive from HF_TOKEN username
     try:
         _api = HfApi(token=HF_TOKEN)
         _username = _api.whoami()["name"]
         HF_REPO_ID = f"{_username}/HuggingClaw-data"
-        print(f"[SYNC] OPENCLAW_DATASET_REPO not set — auto-derived from HF_TOKEN: {HF_REPO_ID}")
+        print(f"[SYNC] Dataset repo auto-derived from HF_TOKEN: {HF_REPO_ID}")
         del _api, _username
     except Exception as e:
         print(f"[SYNC] WARNING: Could not derive username from HF_TOKEN: {e}")
         HF_REPO_ID = ""
+else:
+    HF_REPO_ID = ""
+del _user_repo
 
 # Setup logging
 log_dir = OPENCLAW_HOME / "workspace"
