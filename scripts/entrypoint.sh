@@ -7,7 +7,7 @@ echo "[entrypoint] OpenClaw HuggingFace Spaces Entrypoint"
 echo "[entrypoint] ======================================="
 
 # ── DNS pre-resolution (run in BACKGROUND — was 121s blocking) ──────────────
-echo "[entrypoint] Resolving WhatsApp domains via DNS-over-HTTPS (background)..."
+echo "[entrypoint] Resolving WhatsApp & Telegram domains via DNS-over-HTTPS (background)..."
 DNS_START=$(date +%s)
 (
   python3 /home/node/scripts/dns-resolve.py /tmp/dns-resolved.json 2>&1

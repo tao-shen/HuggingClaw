@@ -22,14 +22,17 @@ DOH_ENDPOINTS = [
     "https://dns.google/resolve",         # Google (hostname)
 ]
 
-# Domains that WhatsApp/Baileys needs to connect to
+# Domains that WhatsApp/Baileys and Telegram need to connect to
 DOMAINS = [
+    # WhatsApp / Baileys
     "web.whatsapp.com",
     "g.whatsapp.net",
     "mmg.whatsapp.net",
     "pps.whatsapp.net",
     "static.whatsapp.net",
     "media.fmed1-1.fna.whatsapp.net",
+    # Telegram Bot API
+    "api.telegram.org",
 ]
 
 
@@ -70,13 +73,14 @@ def main() -> None:
     try:
         import socket
         socket.getaddrinfo("web.whatsapp.com", 443, socket.AF_INET)
-        print("[dns] System DNS works for web.whatsapp.com — DoH not needed")
+        socket.getaddrinfo("api.telegram.org", 443, socket.AF_INET)
+        print("[dns] System DNS works for WhatsApp & Telegram — DoH not needed")
         # Write empty file so dns-fix.cjs knows it's not needed
         with open(output_file, "w") as f:
             json.dump({}, f)
         return
-    except (socket.gaierror, OSError):
-        print("[dns] System DNS cannot resolve web.whatsapp.com — using DoH fallback")
+    except (socket.gaierror, OSError) as e:
+        print(f"[dns] System DNS failed ({e}) — using DoH fallback")
 
     results = {}
     for domain in DOMAINS:
