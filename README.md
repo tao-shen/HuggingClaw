@@ -78,7 +78,6 @@ Go to **Settings → Repository secrets** and configure:
 
 | Secret | Status | Description | Example |
 |--------|:------:|-------------|---------|
-| `OPENCLAW_PASSWORD` | Recommended | Password for the Control UI (default: `huggingclaw`) | `my-secret-password` |
 | `HF_TOKEN` | **Required** | HF Access Token with write permission ([create one](https://huggingface.co/settings/tokens)) | `hf_AbCdEfGhIjKlMnOpQrStUvWxYz` |
 | `OPENCLAW_DATASET_REPO` | See below | Dataset repo for backup — format: `username/repo-name`. Required in manual mode; optional in auto mode (see [Data Persistence](#data-persistence)) | `tao-shen/HuggingClaw-data` |
 | `OPENAI_API_KEY` | Recommended | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key | `sk-proj-xxxxxxxxxxxx` |
@@ -124,7 +123,7 @@ Fine-tune persistence and performance. Set these as **Repository Secrets** in HF
 
 ### 3. Open the Control UI
 
-Visit your Space URL. Click the settings icon, enter your password, and connect.
+Visit your Space URL. The Control UI uses device-based authentication — only browsers paired through your HuggingFace profile can connect.
 
 Messaging integrations (Telegram, WhatsApp) can be configured directly inside the Control UI after connecting.
 
@@ -141,15 +140,13 @@ HuggingClaw supports **all OpenClaw environment variables** — it passes the en
 - **Ollama** — `OLLAMA_HOST`, `OLLAMA_NUM_PARALLEL`, `OLLAMA_KEEP_ALIVE`
 - **Secrets** — `OPENCLAW_SECRETS_BACKEND`, `VAULT_ADDR`, `VAULT_TOKEN`
 
-HuggingClaw adds its own variables for persistence and deployment: `HF_TOKEN`, `OPENCLAW_DATASET_REPO`, `AUTO_CREATE_DATASET`, `SYNC_INTERVAL`, `OPENCLAW_PASSWORD`, `OPENCLAW_DEFAULT_MODEL`, etc. See [`.env.example`](.env.example) for the complete reference.
+HuggingClaw adds its own variables for persistence and deployment: `HF_TOKEN`, `OPENCLAW_DATASET_REPO`, `AUTO_CREATE_DATASET`, `SYNC_INTERVAL`, `OPENCLAW_DEFAULT_MODEL`, etc. See [`.env.example`](.env.example) for the complete reference.
 
 ## Security
 
-- **Password-protected** — the Control UI requires a password to connect and manage the instance
+- **Device authentication** — only browsers paired through your HuggingFace profile can access the Control UI; incognito or third-party browsers are denied
 - **Secrets stay server-side** — API keys and tokens are never exposed to the browser
 - **Private backups** — the Dataset repo is created as private by default
-
-> **Tip:** Change the default password from `huggingclaw` to something unique by setting the `OPENCLAW_PASSWORD` secret.
 
 ## License
 

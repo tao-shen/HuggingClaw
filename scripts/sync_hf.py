@@ -65,8 +65,6 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # OpenRouter API key (optional; alternative to OPENAI_API_KEY + OPENAI_BASE_URL)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Gateway password (override via HF Secret OPENCLAW_PASSWORD)
-OPENCLAW_PASSWORD = os.environ.get("OPENCLAW_PASSWORD", "huggingclaw")
 
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
@@ -344,10 +342,9 @@ class OpenClawFullSync:
             try:
                 with open(config_path, "r") as f:
                     cfg = json.load(f)
-                # Replace token placeholder
-                if "gateway" in cfg and "auth" in cfg["gateway"]:
-                    if cfg["gateway"]["auth"].get("token") == "__OPENCLAW_PASSWORD__":
-                        cfg["gateway"]["auth"]["token"] = OPENCLAW_PASSWORD
+                # Remove auth block (no password/token — device auth only)
+                if "gateway" in cfg:
+                    cfg["gateway"].pop("auth", None)
                 if OPENAI_API_KEY and "models" in cfg and "providers" in cfg["models"] and "openai" in cfg["models"]["providers"]:
                     cfg["models"]["providers"]["openai"]["apiKey"] = OPENAI_API_KEY
                     if OPENAI_BASE_URL:
@@ -418,9 +415,6 @@ class OpenClawFullSync:
                     data["plugins"]["locations"] = [l for l in locs if l != "/dev/null"]
 
             # Force full gateway config for HF Spaces
-            if not OPENCLAW_PASSWORD:
-                print("[SYNC] WARNING: OPENCLAW_PASSWORD not set! Gateway will have no auth.")
-            auth = {"token": OPENCLAW_PASSWORD} if OPENCLAW_PASSWORD else {}
             # Dynamic allowedOrigins from SPACE_HOST (auto-set by HF runtime)
             allowed_origins = [
                 "https://huggingface.co",
@@ -433,14 +427,13 @@ class OpenClawFullSync:
                 "mode": "local",
                 "bind": "lan",
                 "port": 7860,
-                "auth": auth,
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
                     "allowInsecureAuth": True,
                     "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (auth={'token' if OPENCLAW_PASSWORD else 'none'}, origins={len(allowed_origins)})")
+            print(f"[SYNC] Set gateway config (auth=device-only, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})

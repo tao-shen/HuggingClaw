@@ -3,7 +3,6 @@
     "mode": "local",
     "bind": "lan",
     "port": 7860,
-    "auth": { "token": "__OPENCLAW_PASSWORD__" },
     "trustedProxies": [
       "0.0.0.0/0"
     ],
