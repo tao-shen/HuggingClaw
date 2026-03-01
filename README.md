@@ -93,7 +93,7 @@ In addition to the secrets above, HuggingClaw provides environment variables to 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTO_CREATE_DATASET` | `true` | **Auto-create the Dataset repo** if it doesn't exist. When set to `true`, HuggingClaw automatically creates a **private** HuggingFace Dataset repo (using the name from `OPENCLAW_DATASET_REPO`) on first startup. Set to `false` if you prefer to [create the repo manually](https://huggingface.co/new-dataset) before deploying. Accepted values: `true`, `1`, `yes` (enabled) / `false`, `0`, `no` (disabled). |
+| `AUTO_CREATE_DATASET` | `false` | **Auto-create the Dataset repo** if it doesn't exist. Default is `false` for security — you must [create the repo manually](https://huggingface.co/new-dataset) first. Set to `true` to let HuggingClaw automatically create a **private** Dataset repo (using the name from `OPENCLAW_DATASET_REPO`) on first startup. Accepted values: `true`, `1`, `yes` (enabled) / `false`, `0`, `no` (disabled). |
 | `SYNC_INTERVAL` | `60` | **Backup interval in seconds.** How often HuggingClaw syncs the `~/.openclaw` directory (conversations, settings, credentials) to the HuggingFace Dataset repo. Lower values mean less data loss on restart but more API calls. Recommended: `60`–`300`. |
 | `NODE_MEMORY_LIMIT` | `512` | **Node.js heap memory limit in MB.** HF free tier provides 16 GB RAM; the default 512 MB is enough for most cases. Increase if you run complex agent workflows or handle very large conversations. |
 | `TZ` | `UTC` | **Timezone** for log timestamps and scheduled tasks. Example: `Asia/Shanghai`, `America/New_York`. |

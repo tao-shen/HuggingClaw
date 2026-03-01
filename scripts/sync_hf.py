@@ -77,7 +77,7 @@ SPACE_HOST = os.environ.get("SPACE_HOST", "")   # e.g. "tao-shen-huggingclaw.hf.
 SPACE_ID   = os.environ.get("SPACE_ID", "")      # e.g. "tao-shen/HuggingClaw"
 
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))
-AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "true").lower() in ("true", "1", "yes")
+AUTO_CREATE_DATASET = os.environ.get("AUTO_CREATE_DATASET", "false").lower() in ("true", "1", "yes")
 
 # Setup logging
 log_dir = OPENCLAW_HOME / "workspace"
