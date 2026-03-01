@@ -73,6 +73,8 @@ tags:
 
 Click **Duplicate this Space** on the [HuggingClaw Space page](https://huggingface.co/spaces/tao-shen/HuggingClaw).
 
+> **After duplicating:** Edit your Space's `README.md` and update the `datasets:` field in the YAML header to point to your own dataset repo (e.g. `your-name/YourSpace-data`), or remove it entirely. This prevents your Space from appearing as linked to the original dataset.
+
 ### 2. Set Secrets
 
 Go to **Settings → Repository secrets** and configure:
