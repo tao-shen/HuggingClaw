@@ -22,6 +22,8 @@ import shutil
 import tempfile
 import traceback
 import re
+import urllib.request
+import ssl
 from pathlib import Path
 from datetime import datetime
 # Set timeout BEFORE importing huggingface_hub
@@ -99,6 +101,73 @@ log_dir = OPENCLAW_HOME / "workspace"
 log_dir.mkdir(parents=True, exist_ok=True)
 sys.stdout = TeeLogger(log_dir / "sync.log", sys.stdout)
 sys.stderr = sys.stdout
+
+# ── Telegram API Base Auto-Probe ────────────────────────────────────────────
+
+# HF Spaces blocks DNS for api.telegram.org. Probe multiple API bases at
+# startup and pick the first one that responds to getMe.  The working base
+# is then injected into the OpenClaw Telegram channel config.
+
+# User can force a specific base via env var (skip auto-probe)
+TELEGRAM_API_BASE = os.environ.get("TELEGRAM_API_BASE", "")
+
+TELEGRAM_API_BASES = [
+    "https://api.telegram.org",                         # official
+    "https://telegram-api.mykdigi.com",                 # known mirror
+    "https://telegram-api-proxy-anonymous.pages.dev/api",  # Cloudflare Pages proxy
+]
+
+def probe_telegram_api(bot_token: str, timeout: int = 10) -> str:
+    """Probe multiple Telegram API base URLs and return the first working one.
+    Returns the working base URL (without trailing slash), or empty string if none work.
+    """
+    if not bot_token:
+        return ""
+
+    ctx = ssl.create_default_context()
+    for base in TELEGRAM_API_BASES:
+        url = f"{base}/bot{bot_token}/getMe"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            resp = urllib.request.urlopen(req, timeout=timeout, context=ctx)
+            data = json.loads(resp.read().decode())
+            if data.get("ok"):
+                bot_name = data.get("result", {}).get("username", "unknown")
+                print(f"[TELEGRAM] ✓ API base works: {base} (bot: @{bot_name})")
+                return base.rstrip("/")
+        except Exception as e:
+            reason = str(e)[:80]
+            print(f"[TELEGRAM] ✗ API base failed: {base} ({reason})")
+            continue
+
+    print("[TELEGRAM] WARNING: All API bases failed! Telegram will not work.")
+    return ""
+
+def get_telegram_bot_token() -> str:
+    """Extract Telegram bot token from OpenClaw config or environment."""
+    # 1. Environment variable
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if token:
+        return token
+
+    # 2. From openclaw.json channels config
+    config_path = OPENCLAW_HOME / "openclaw.json"
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            # Check channels.telegram.botToken (single account)
+            tg = cfg.get("channels", {}).get("telegram", {})
+            if tg.get("botToken"):
+                return tg["botToken"]
+            # Check channels.telegram.accounts.*.botToken (multi account)
+            for acc in tg.get("accounts", {}).values():
+                if isinstance(acc, dict) and acc.get("botToken"):
+                    return acc["botToken"]
+        except Exception:
+            pass
+    return ""
+
 
 # ── Sync Manager ────────────────────────────────────────────────────────────
 
@@ -292,8 +361,8 @@ class OpenClawFullSync:
                     cfg = json.load(f)
                 # Replace token placeholder
                 if "gateway" in cfg and "auth" in cfg["gateway"]:
-                    if cfg["gateway"]["auth"].get("token") == "__OPENCLAW_PASSWORD__":
-                        cfg["gateway"]["auth"]["token"] = OPENCLAW_PASSWORD
+                    if cfg["gateway"]["auth"].get("password") == "__OPENCLAW_PASSWORD__":
+                        cfg["gateway"]["auth"]["password"] = OPENCLAW_PASSWORD
                 if OPENAI_API_KEY and "models" in cfg and "providers" in cfg["models"] and "openai" in cfg["models"]["providers"]:
                     cfg["models"]["providers"]["openai"]["apiKey"] = OPENAI_API_KEY
                     if OPENAI_BASE_URL:
@@ -364,10 +433,9 @@ class OpenClawFullSync:
                     data["plugins"]["locations"] = [l for l in locs if l != "/dev/null"]
 
             # Force full gateway config for HF Spaces
-            # Token auth: persisted in browser localStorage after first entry
             if not OPENCLAW_PASSWORD:
                 print("[SYNC] WARNING: OPENCLAW_PASSWORD not set! Gateway will have no auth.")
-            auth = {"token": OPENCLAW_PASSWORD} if OPENCLAW_PASSWORD else {}
+            auth = {"password": OPENCLAW_PASSWORD} if OPENCLAW_PASSWORD else {}
             # Dynamic allowedOrigins from SPACE_HOST (auto-set by HF runtime)
             allowed_origins = [
                 "https://huggingface.co",
@@ -388,7 +456,7 @@ class OpenClawFullSync:
                     "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (auth={'token' if OPENCLAW_PASSWORD else 'none'}, origins={len(allowed_origins)})")
+            print(f"[SYNC] Set gateway config (auth={'password' if OPENCLAW_PASSWORD else 'none'}, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
@@ -427,6 +495,35 @@ class OpenClawFullSync:
                 data["plugins"]["entries"]["telegram"] = {"enabled": True}
             elif isinstance(data["plugins"]["entries"]["telegram"], dict):
                 data["plugins"]["entries"]["telegram"]["enabled"] = True
+
+            # ── Telegram API base auto-probe ──────────────────────────────
+            # HF Spaces blocks api.telegram.org DNS. Probe mirrors and set
+            # the working base URL in the channel config so grammY uses it.
+            if TELEGRAM_API_BASE:
+                # User explicitly set a base via env var — use it directly
+                data.setdefault("channels", {}).setdefault("telegram", {})
+                data["channels"]["telegram"]["apiRoot"] = TELEGRAM_API_BASE.rstrip("/")
+                print(f"[TELEGRAM] Using user-specified API base: {TELEGRAM_API_BASE}")
+            else:
+                bot_token = get_telegram_bot_token()
+                if bot_token:
+                    print("[TELEGRAM] Probing Telegram API bases...")
+                    working_base = probe_telegram_api(bot_token)
+                    if working_base and working_base != "https://api.telegram.org":
+                        # Set apiRoot in channels.telegram for OpenClaw/grammY
+                        data.setdefault("channels", {}).setdefault("telegram", {})
+                        data["channels"]["telegram"]["apiRoot"] = working_base
+                        print(f"[TELEGRAM] Set channels.telegram.apiRoot = {working_base}")
+                    elif working_base:
+                        # Official API works — remove any previously set mirror
+                        tg_ch = data.get("channels", {}).get("telegram", {})
+                        if tg_ch.get("apiRoot"):
+                            del tg_ch["apiRoot"]
+                            print("[TELEGRAM] Official API works — cleared apiRoot override")
+                        else:
+                            print("[TELEGRAM] Official API works — no override needed")
+                else:
+                    print("[TELEGRAM] No bot token found — skipping API probe")
 
             with open(config_path, "w") as f:
                 json.dump(data, f, indent=2)

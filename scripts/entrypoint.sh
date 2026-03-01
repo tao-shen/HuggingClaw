@@ -6,12 +6,13 @@ BOOT_START=$(date +%s)
 echo "[entrypoint] OpenClaw HuggingFace Spaces Entrypoint"
 echo "[entrypoint] ======================================="
 
-# ── DNS pre-resolution (BLOCKING — needed before app starts) ──────────────
-echo "[entrypoint] Resolving WhatsApp & Telegram domains via DNS-over-HTTPS..."
-DNS_START=$(date +%s)
-python3 /home/node/scripts/dns-resolve.py /tmp/dns-resolved.json 2>&1
-DNS_END=$(date +%s)
-echo "[TIMER] DNS pre-resolve: $((DNS_END - DNS_START))s"
+# ── DNS pre-resolution (background — non-blocking) ───────────────────────
+# Resolves WhatsApp domains via DoH for dns-fix.cjs to consume.
+# Telegram connectivity is handled by API base auto-probe in sync_hf.py.
+echo "[entrypoint] Starting DNS resolution in background..."
+python3 /home/node/scripts/dns-resolve.py /tmp/dns-resolved.json 2>&1 &
+DNS_PID=$!
+echo "[entrypoint] DNS resolver PID: $DNS_PID"
 
 # ── Node.js memory limit (only if explicitly set) ─────────────────────────
 if [ -n "$NODE_MEMORY_LIMIT" ]; then
