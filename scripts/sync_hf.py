@@ -484,11 +484,10 @@ class OpenClawFullSync:
             # ── Telegram channel defaults (open DM policy for HF Spaces) ──
             # Personal bot on HF Spaces — no need for strict pairing.
             tg_ch = data.setdefault("channels", {}).setdefault("telegram", {})
-            if tg_ch.get("dmPolicy") in ("pairing", None):
-                tg_ch["dmPolicy"] = "open"
-                tg_ch["allowFrom"] = ["*"]
-                print("[SYNC] Set channels.telegram.dmPolicy = open, allowFrom = [*]")
+            tg_ch["dmPolicy"] = "open"
+            tg_ch["allowFrom"] = ["*"]
             tg_ch["configWrites"] = True
+            print("[SYNC] Set channels.telegram: dmPolicy=open, allowFrom=[*], configWrites=true")
 
             # ── Telegram API base auto-probe ──────────────────────────────
             # Probe is done in run_openclaw() — sets TELEGRAM_API_ROOT env var
