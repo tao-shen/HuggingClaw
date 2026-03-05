@@ -8,7 +8,7 @@ pinned: false
 license: mit
 datasets:
   - tao-shen/HuggingClaw-data
-short_description: Always-on AI assistant — free, zero hardware, WhatsApp & Telegram ready
+short_description: Free always-on AI assistant, no hardware required
 app_port: 7860
 tags:
   - huggingface
