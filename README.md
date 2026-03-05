@@ -8,7 +8,7 @@ pinned: false
 license: mit
 datasets:
   - tao-shen/HuggingClaw-data
-short_description: Deploy OpenClaw on HuggingFace Spaces
+short_description: Always-on AI assistant — free, zero hardware, WhatsApp & Telegram ready
 app_port: 7860
 tags:
   - huggingface
@@ -37,9 +37,9 @@ tags:
 <div align="center">
   <img src="HuggingClaw.png" alt="HuggingClaw" width="720"/>
   <br/><br/>
-  <strong>The best way to deploy <a href="https://github.com/openclaw/openclaw">OpenClaw</a> on the cloud</strong>
+  <strong>Your always-on AI assistant — free, no server needed</strong>
   <br/>
-  <sub>Zero hardware · Always online · Auto-persistent · One-click deploy</sub>
+  <sub>WhatsApp · Telegram · 40+ channels · 16 GB RAM · One-click deploy · Auto-persistent</sub>
   <br/><br/>
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -55,11 +55,19 @@ tags:
 
 ---
 
-## Why HuggingClaw?
+## What you get
 
-[OpenClaw](https://github.com/openclaw/openclaw) is a powerful, popular AI assistant (Telegram, WhatsApp, 40+ channels), but it’s meant to run on your own machine (e.g. a Mac Mini). Not everyone has that. You can deploy on the cloud, but most providers either charge by the hour or offer only very limited resources. **HuggingFace Spaces** gives you 2 vCPU and **16 GB RAM** for free — a good fit for OpenClaw, but Spaces have two problems we fix.
+In about 5 minutes, you’ll have a **free, always-on AI assistant** connected to WhatsApp, Telegram, and 40+ other channels — no server, no subscription, no hardware required.
 
-**HuggingClaw** is this repo. It fixes two Hugging Face Space issues: **(1) Data is not persistent** — we use a private **HuggingFace Dataset** to sync and restore your conversations, settings, and credentials so they survive restarts; **(2) DNS resolution fails** for some domains (e.g. WhatsApp) — we fix it with DNS-over-HTTPS and a Node.js DNS patch so OpenClaw can connect reliably.
+| | |
+|---|---|
+| **Free forever** | HuggingFace Spaces gives you 2 vCPU + 16 GB RAM at no cost |
+| **Always online** | Your conversations, settings, and credentials survive every restart |
+| **WhatsApp & Telegram** | Works reliably, including channels that HF Spaces normally blocks |
+| **Any LLM** | OpenAI, Claude, Gemini, OpenRouter (200+ models, free tier available), or your own Ollama |
+| **One-click deploy** | Duplicate the Space, set two secrets, done |
+
+> **Powered by [OpenClaw](https://github.com/openclaw/openclaw)** — an open-source AI assistant that normally requires your own machine (e.g. a Mac Mini). HuggingClaw makes it run for free on HuggingFace Spaces by solving two Spaces limitations: data loss on restart (fixed via HF Dataset sync) and DNS failures for some domains like WhatsApp (fixed via DNS-over-HTTPS).
 
 ## Architecture
 
@@ -77,37 +85,38 @@ Click **Duplicate this Space** on the [HuggingClaw Space page](https://huggingfa
 
 ### 2. Set Secrets
 
-Go to **Settings → Repository secrets** and configure:
+Go to **Settings → Repository secrets** and add the following. The only two you *must* set are `HF_TOKEN` and one API key.
 
 | Secret | Status | Description | Example |
 |--------|:------:|-------------|---------|
 | `HF_TOKEN` | **Required** | HF Access Token with write permission ([create one](https://huggingface.co/settings/tokens)) | `hf_AbCdEfGhIjKlMnOpQrStUvWxYz` |
-| `OPENCLAW_DATASET_REPO` | See below | Dataset repo for backup — format: `username/repo-name`. Required in manual mode; optional in auto mode (see [Data Persistence](#data-persistence)) | `your-name/YourSpace-data` |
-| `OPENAI_API_KEY` | Recommended | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key | `sk-proj-xxxxxxxxxxxx` |
-| `OPENROUTER_API_KEY` | Optional | [OpenRouter](https://openrouter.ai) API key (200+ models, free tier available) | `sk-or-v1-xxxxxxxxxxxx` |
+| `AUTO_CREATE_DATASET` | **Recommended** | Set to `true` — HuggingClaw will automatically create a private backup dataset on first startup. No manual setup needed. | `true` |
+| `OPENROUTER_API_KEY` | Recommended | [OpenRouter](https://openrouter.ai) API key — 200+ models, free tier available. Easiest way to get started. | `sk-or-v1-xxxxxxxxxxxx` |
+| `OPENAI_API_KEY` | Optional | OpenAI (or any [OpenAI-compatible](https://openclawdoc.com/docs/reference/environment-variables)) API key | `sk-proj-xxxxxxxxxxxx` |
 | `ANTHROPIC_API_KEY` | Optional | Anthropic Claude API key | `sk-ant-xxxxxxxxxxxx` |
 | `GOOGLE_API_KEY` | Optional | Google / Gemini API key | `AIzaSyXxXxXxXxXx` |
 | `OPENCLAW_DEFAULT_MODEL` | Optional | Default model for new conversations | `openai/gpt-oss-20b:free` |
 
 ### Data Persistence
 
-HuggingClaw syncs `~/.openclaw` (conversations, settings, credentials) to a private HuggingFace Dataset repo so data survives restarts. There are two ways to set this up:
+HuggingClaw syncs `~/.openclaw` (conversations, settings, credentials) to a private HuggingFace Dataset repo so your data survives every restart.
 
-**Option A — Manual mode (default, recommended)**
+**Option A — Auto mode (recommended)**
+
+1. Set `AUTO_CREATE_DATASET` = `true` in your Space secrets
+2. Set `HF_TOKEN` with write permission
+3. Done — on first startup, HuggingClaw automatically creates a private Dataset repo named `your-username/SpaceName-data`. Each duplicated Space gets its own isolated dataset.
+
+> (Optional) Set `OPENCLAW_DATASET_REPO` = `your-name/custom-name` if you prefer a specific repo name.
+
+**Option B — Manual mode**
 
 1. Go to [huggingface.co/new-dataset](https://huggingface.co/new-dataset) and create a **private** Dataset repo (e.g. `your-name/HuggingClaw-data`)
 2. Set `OPENCLAW_DATASET_REPO` = `your-name/HuggingClaw-data` in your Space secrets
 3. Set `HF_TOKEN` with write permission
 4. Done — HuggingClaw will sync to this repo every 60 seconds
 
-**Option B — Auto mode**
-
-1. Set `AUTO_CREATE_DATASET` = `true` in your Space secrets
-2. Set `HF_TOKEN` with write permission
-3. (Optional) Set `OPENCLAW_DATASET_REPO` if you want a custom repo name
-4. On first startup, HuggingClaw automatically creates a **private** Dataset repo. If `OPENCLAW_DATASET_REPO` is not set, it derives the name from your HF username + Space name: `your-username/SpaceName-data` (e.g. `your-name/YourSpace-data`). Each Space gets its own dataset, so duplicating a Space won't cause conflicts
-
-> **Security note:** `AUTO_CREATE_DATASET` defaults to `false` — the system will not create repos on your behalf unless you explicitly opt in.
+> **Security note:** `AUTO_CREATE_DATASET` defaults to `false` — HuggingClaw will never create repos on your behalf unless you explicitly opt in.
 
 ### Environment Variables
 
