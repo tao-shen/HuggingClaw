@@ -16,9 +16,9 @@
     "mode": "merge",
     "providers": {
       "zhipu": {
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic",
         "apiKey": "<ENV_VAR>",
-        "api": "openai-completions",
+        "api": "anthropic-messages",
         "models": [
           { "id": "glm-4.5-air", "name": "GLM-4.5 Air" },
           { "id": "glm-4.5", "name": "GLM-4.5" },

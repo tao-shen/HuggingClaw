@@ -65,7 +65,7 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # OpenRouter API key (optional; alternative to OPENAI_API_KEY + OPENAI_BASE_URL)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Zhipu AI (z.ai) API key (optional; GLM-4 series, OpenAI-compatible)
+# Zhipu AI (z.ai) API key (optional; GLM-4 series, Anthropic-compatible endpoint)
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 
 # Gateway token (default: huggingclaw; override via GATEWAY_TOKEN env var)
@@ -474,15 +474,14 @@ class OpenClawFullSync:
                 print("[SYNC] Set OpenRouter provider")
             if ZHIPU_API_KEY:
                 providers["zhipu"] = {
-                    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+                    "baseUrl": "https://open.bigmodel.cn/api/anthropic",
                     "apiKey": ZHIPU_API_KEY,
-                    "api": "openai-completions",
+                    "api": "anthropic-messages",
                     "models": [
                         {"id": "glm-4.5-air", "name": "GLM-4.5 Air"},
                         {"id": "glm-4.5", "name": "GLM-4.5"},
                         {"id": "glm-4.6", "name": "GLM-4.6"},
                         {"id": "glm-4.7", "name": "GLM-4.7"},
-                        {"id": "glm-5", "name": "GLM-5"},
                     ]
                 }
                 print("[SYNC] Set Zhipu AI provider")
