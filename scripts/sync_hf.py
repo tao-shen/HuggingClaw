@@ -65,12 +65,17 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # OpenRouter API key (optional; alternative to OPENAI_API_KEY + OPENAI_BASE_URL)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
+# Zhipu AI (z.ai) API key (optional; GLM-4 series, OpenAI-compatible)
+ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
+
 # Gateway token (default: huggingclaw; override via GATEWAY_TOKEN env var)
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "huggingclaw")
 
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
-    "openai/gpt-5-nano" if OPENAI_API_KEY else "openrouter/openai/gpt-oss-20b:free"
+    "openai/gpt-5-nano" if OPENAI_API_KEY
+    else "zhipu/glm-4-flash" if ZHIPU_API_KEY
+    else "openrouter/openai/gpt-oss-20b:free"
 )
 
 # HF Spaces built-in env vars (auto-set by HF runtime)
@@ -467,8 +472,21 @@ class OpenClawFullSync:
                     ]
                 }
                 print("[SYNC] Set OpenRouter provider")
-            if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
-                print("[SYNC] WARNING: No OPENAI_API_KEY or OPENROUTER_API_KEY set, LLM features may not work")
+            # Zhipu AI provider (optional)
+            if ZHIPU_API_KEY:
+                data["models"]["providers"]["zhipu"] = {
+                    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+                    "apiKey": ZHIPU_API_KEY,
+                    "api": "openai-completions",
+                    "models": [
+                        {"id": "glm-4-flash", "name": "GLM-4 Flash"},
+                        {"id": "glm-4-plus", "name": "GLM-4 Plus"},
+                        {"id": "glm-4-long", "name": "GLM-4 Long"},
+                    ]
+                }
+                print("[SYNC] Set Zhipu AI provider")
+            if not OPENAI_API_KEY and not OPENROUTER_API_KEY and not ZHIPU_API_KEY:
+                print("[SYNC] WARNING: No API key set (OPENAI/OPENROUTER/ZHIPU), LLM features may not work")
             data["models"]["providers"].pop("gemini", None)
             data["agents"]["defaults"]["model"]["primary"] = OPENCLAW_DEFAULT_MODEL
 
@@ -567,8 +585,10 @@ class OpenClawFullSync:
             env["OPENAI_BASE_URL"] = OPENAI_BASE_URL
         if OPENROUTER_API_KEY:
             env["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
-        if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
-            print(f"[SYNC] WARNING: No OPENAI_API_KEY or OPENROUTER_API_KEY set, LLM features may not work")
+        if ZHIPU_API_KEY:
+            env["ZHIPU_API_KEY"] = ZHIPU_API_KEY
+        if not OPENAI_API_KEY and not OPENROUTER_API_KEY and not ZHIPU_API_KEY:
+            print(f"[SYNC] WARNING: No API key set (OPENAI/OPENROUTER/ZHIPU), LLM features may not work")
 
         # ── Telegram API base probe ──────────────────────────────────────
         # Determine working Telegram API endpoint and set env var for
