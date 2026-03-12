@@ -71,6 +71,10 @@ ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 # Gateway token (default: huggingclaw; override via GATEWAY_TOKEN env var)
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "huggingclaw")
 
+# A2A configuration (optional; only activated when A2A_PEERS is set)
+AGENT_NAME = os.environ.get("AGENT_NAME", "HuggingClaw")
+A2A_PEERS = os.environ.get("A2A_PEERS", "")  # comma-separated peer URLs
+
 # Default model for new conversations (infer from provider if not set)
 OPENCLAW_DEFAULT_MODEL = os.environ.get("OPENCLAW_DEFAULT_MODEL") or (
     "openai/gpt-5-nano" if OPENAI_API_KEY
@@ -378,7 +382,7 @@ class OpenClawFullSync:
             with open(config_path, "w") as f:
                 json.dump({
                     "gateway": {
-                        "mode": "local", "bind": "lan", "port": 7860,
+                        "mode": "local", "bind": "lan", "port": 7861,
                         "trustedProxies": ["0.0.0.0/0"],
                         "controlUi": {
                             "allowInsecureAuth": True,
@@ -436,7 +440,7 @@ class OpenClawFullSync:
             data["gateway"] = {
                 "mode": "local",
                 "bind": "lan",
-                "port": 7860,
+                "port": 7861,
                 "auth": {"token": GATEWAY_TOKEN},
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
@@ -445,7 +449,7 @@ class OpenClawFullSync:
                     "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (auth=token, origins={len(allowed_origins)})")
+            print(f"[SYNC] Set gateway config (port=7861, auth=token, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
@@ -490,13 +494,46 @@ class OpenClawFullSync:
             data.setdefault("models", {})["providers"] = providers
             data["agents"]["defaults"]["model"]["primary"] = OPENCLAW_DEFAULT_MODEL
 
-            # Plugin whitelist (only load telegram + whatsapp to speed up startup)
+            # Plugin whitelist
             data.setdefault("plugins", {}).setdefault("entries", {})
-            data["plugins"]["allow"] = ["telegram", "whatsapp"]
+            plugin_allow = ["telegram", "whatsapp"]
+            if A2A_PEERS:
+                plugin_allow.append("a2a-gateway")
+            data["plugins"]["allow"] = plugin_allow
             if "telegram" not in data["plugins"]["entries"]:
                 data["plugins"]["entries"]["telegram"] = {"enabled": True}
             elif isinstance(data["plugins"]["entries"]["telegram"], dict):
                 data["plugins"]["entries"]["telegram"]["enabled"] = True
+
+            # ── A2A Gateway Plugin Configuration (only if A2A_PEERS is set) ──
+            if A2A_PEERS:
+                peers = []
+                for peer_url in A2A_PEERS.split(","):
+                    peer_url = peer_url.strip()
+                    if not peer_url:
+                        continue
+                    name = peer_url.split("//")[-1].split(".")[0].split("-")[-1].capitalize()
+                    peers.append({
+                        "name": name,
+                        "agentCardUrl": f"{peer_url}/.well-known/agent-card.json"
+                    })
+                    print(f"[SYNC] A2A peer: {name} → {peer_url}")
+
+                data["plugins"]["entries"]["a2a-gateway"] = {
+                    "enabled": True,
+                    "config": {
+                        "agentCard": {
+                            "name": AGENT_NAME,
+                            "description": f"{AGENT_NAME} - HuggingClaw A2A Agent",
+                            "skills": [{"id": "chat", "name": "chat", "description": "Chat bridge"}]
+                        },
+                        "server": {"host": "0.0.0.0", "port": 18800},
+                        "security": {"inboundAuth": "none"},
+                        "routing": {"defaultAgentId": "main"},
+                        "peers": peers
+                    }
+                }
+                print(f"[SYNC] A2A gateway configured: name={AGENT_NAME}, port=18800, peers={len(peers)}")
 
             # ── Telegram channel defaults (open DM policy for HF Spaces) ──
             # Personal bot on HF Spaces — no need for strict pairing.

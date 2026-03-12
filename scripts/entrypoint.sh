@@ -64,6 +64,12 @@ if [ -f /app/openclaw/.version ]; then
   echo "[entrypoint] OpenClaw version: $OPENCLAW_VERSION"
 fi
 
+# ── Start A2A proxy on port 7860 (OpenClaw moves to 7861) ─────────────────
+echo "[entrypoint] Starting A2A proxy on port 7860..."
+node /home/node/scripts/a2a-proxy.cjs &
+A2A_PROXY_PID=$!
+echo "[entrypoint] A2A proxy PID: $A2A_PROXY_PID"
+
 # ── Start OpenClaw via sync_hf.py ─────────────────────────────────────────
 echo "[entrypoint] Starting OpenClaw via sync_hf.py..."
 exec python3 -u /home/node/scripts/sync_hf.py

@@ -52,6 +52,14 @@ RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
   && echo "[build] version: $(cat /app/openclaw/.version)" \
   && echo "[build][layer2] Total clone+install+build: $(($(date +%s) - START))s"
 
+# ── Layer 2.5: A2A Gateway Extension (optional, activated by A2A_PEERS env) ──
+RUN echo "[build][layer2.5] Cloning A2A gateway extension..." && START=$(date +%s) \
+  && git clone --depth 1 https://github.com/win4r/openclaw-a2a-gateway.git /app/openclaw/extensions/a2a-gateway \
+  && cd /app/openclaw/extensions/a2a-gateway \
+  && npm install --production \
+  && echo "[build] A2A gateway installed: $(ls node_modules | wc -l) packages" \
+  && echo "[build][layer2.5] A2A gateway: $(($(date +%s) - START))s"
+
 # ── Layer 3 (node): Scripts + Config ──────────────────────────────────────────
 COPY --chown=node:node scripts /home/node/scripts
 COPY --chown=node:node openclaw.json /home/node/scripts/openclaw.json.default
