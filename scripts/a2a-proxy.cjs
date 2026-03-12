@@ -240,7 +240,14 @@ function proxyRequest(req, res, targetPort) {
   };
 
   const proxy = http.request(options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    // Fix iframe embedding: strip X-Frame-Options so HF Spaces iframe works
+    const headers = { ...proxyRes.headers };
+    delete headers['x-frame-options'];
+    if (headers['content-security-policy']) {
+      headers['content-security-policy'] = headers['content-security-policy']
+        .replace(/frame-ancestors\s+'none'/i, "frame-ancestors 'self' https://huggingface.co https://*.hf.space");
+    }
+    res.writeHead(proxyRes.statusCode, headers);
     proxyRes.pipe(res, { end: true });
   });
 
