@@ -21,9 +21,9 @@ USER node
 ENV HOME=/home/node
 WORKDIR /app
 
-# ── Layer 2 (node): Clone + Patch + Install + Build（合并为一层）─────────────
+# ── Layer 2a: Clone + Patch + Install (split to reduce peak memory) ──────────
 COPY --chown=node:node patches /app/patches
-RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
+RUN echo "[build][layer2a] Clone + install..." && START=$(date +%s) \
   && git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw \
   && echo "[build] git clone: $(($(date +%s) - START))s" \
   && cd openclaw \
@@ -36,11 +36,16 @@ RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
   && T1=$(date +%s) \
   && pnpm install --frozen-lockfile \
   && echo "[build] pnpm install: $(($(date +%s) - T1))s" \
-  && T2=$(date +%s) \
-  && pnpm build \
-  && echo "[build] pnpm build: $(($(date +%s) - T2))s" \
+  && pnpm store prune 2>/dev/null || true \
+  && echo "[build][layer2a] Clone+install: $(($(date +%s) - START))s"
+
+# ── Layer 2b: Build (separate layer so install memory is freed) ──────────────
+RUN cd /app/openclaw \
+  && echo "[build][layer2b] Building..." && START=$(date +%s) \
+  && NODE_OPTIONS="--max-old-space-size=512" pnpm build \
+  && echo "[build] pnpm build: $(($(date +%s) - START))s" \
   && T3=$(date +%s) \
-  && OPENCLAW_PREFER_PNPM=1 pnpm ui:build \
+  && NODE_OPTIONS="--max-old-space-size=512" OPENCLAW_PREFER_PNPM=1 pnpm ui:build \
   && echo "[build] pnpm ui:build: $(($(date +%s) - T3))s" \
   && test -f dist/entry.js && echo "[build] OK dist/entry.js" \
   && test -f dist/plugin-sdk/index.js && echo "[build] OK dist/plugin-sdk/index.js" \
@@ -50,7 +55,7 @@ RUN echo "[build][layer2] Clone + install + build..." && START=$(date +%s) \
   && mkdir -p /app/openclaw/empty-bundled-plugins \
   && node -e "console.log(require('./package.json').version)" > /app/openclaw/.version \
   && echo "[build] version: $(cat /app/openclaw/.version)" \
-  && echo "[build][layer2] Total clone+install+build: $(($(date +%s) - START))s"
+  && echo "[build][layer2b] Build: $(($(date +%s) - START))s"
 
 # ── Layer 2.5: A2A Gateway Extension (optional, activated by A2A_PEERS env) ──
 RUN echo "[build][layer2.5] Cloning A2A gateway extension..." && START=$(date +%s) \
