@@ -26,8 +26,8 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts
 # Enable Telegram API proxy (redirects fetch() to working mirror if needed)
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/telegram-proxy.cjs"
 
-# Token redirect removed — /admin route in a2a-proxy.cjs now handles token injection
-# The pixel office animation is served at / instead
+# Enable token redirect + A2A routing + state/agents endpoints (all in one preload)
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/token-redirect.cjs"
 
 # ── Extensions symlink ──────────────────────────────────────────────────────
 SYMLINK_START=$(date +%s)
@@ -65,12 +65,6 @@ if [ -f /app/openclaw/.version ]; then
   echo "[entrypoint] OpenClaw version: $OPENCLAW_VERSION"
 fi
 
-# ── Start A2A proxy on port 7860 (OpenClaw moves to 7861) ─────────────────
-echo "[entrypoint] Starting A2A proxy on port 7860..."
-node /home/node/scripts/a2a-proxy.cjs &
-A2A_PROXY_PID=$!
-echo "[entrypoint] A2A proxy PID: $A2A_PROXY_PID"
-
-# ── Start OpenClaw via sync_hf.py ─────────────────────────────────────────
+# ── Start OpenClaw via sync_hf.py (directly on port 7860, no proxy) ───────
 echo "[entrypoint] Starting OpenClaw via sync_hf.py..."
 exec python3 -u /home/node/scripts/sync_hf.py
