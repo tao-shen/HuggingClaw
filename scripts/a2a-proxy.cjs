@@ -2,6 +2,10 @@
  * a2a-proxy.cjs — Reverse proxy on port 7860
  *
  * Routes:
+ *   /               → pixel office animation (frontend/index.html)
+ *   /static/*       → static assets (frontend/)
+ *   /admin          → OpenClaw control UI (port 7861)
+ *   /admin/*        → OpenClaw control UI (port 7861)
  *   /.well-known/*  → A2A gateway (port 18800)
  *   /a2a/*          → A2A gateway (port 18800)
  *   /api/state      → local state JSON (for Office frontend polling)
@@ -12,6 +16,57 @@
 
 const http = require('http');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
+
+// Frontend directory (try /home/node/frontend first, then relative)
+const FRONTEND_DIR = fs.existsSync('/home/node/frontend')
+  ? '/home/node/frontend'
+  : path.join(__dirname, '..', 'frontend');
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.md': 'text/markdown; charset=utf-8',
+};
+
+function serveStaticFile(res, filePath) {
+  // Prevent directory traversal
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(FRONTEND_DIR))) {
+    res.writeHead(403);
+    return res.end('Forbidden');
+  }
+  fs.readFile(resolved, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not Found');
+    }
+    const ext = path.extname(resolved).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    const cacheControl = (ext === '.html') ? 'no-cache' : 'public, max-age=86400';
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': cacheControl,
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(data);
+  });
+}
 
 const LISTEN_PORT = 7860;
 const OPENCLAW_PORT = 7861;
@@ -218,7 +273,10 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     });
-    return res.end(JSON.stringify(currentState));
+    return res.end(JSON.stringify({
+      ...currentState,
+      officeName: `${AGENT_NAME}'s Office`
+    }));
   }
 
   // Agents endpoint — merge OpenClaw agents with remote agents
@@ -238,6 +296,26 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify([...remoteAgentStates.values()]));
     });
     return;
+  }
+
+  // Serve index.html at /
+  if (pathname === '/' && req.method === 'GET') {
+    const indexPath = path.join(FRONTEND_DIR, 'index.html');
+    return serveStaticFile(res, indexPath);
+  }
+
+  // Serve static assets at /static/*
+  if (pathname.startsWith('/static/')) {
+    const assetPath = path.join(FRONTEND_DIR, pathname.slice('/static/'.length).split('?')[0]);
+    return serveStaticFile(res, assetPath);
+  }
+
+  // Admin panel → proxy to OpenClaw UI directly
+  if (pathname === '/admin' || pathname === '/admin/') {
+    const token = process.env.GATEWAY_TOKEN || '';
+    // Rewrite to OpenClaw root with token
+    req.url = token ? `/?token=${token}` : '/';
+    return proxyRequest(req, res, OPENCLAW_PORT);
   }
 
   // Everything else → OpenClaw

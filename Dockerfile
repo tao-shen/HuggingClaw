@@ -60,10 +60,14 @@ RUN echo "[build][layer2.5] Cloning A2A gateway extension..." && START=$(date +%
   && echo "[build] A2A gateway installed: $(ls node_modules | wc -l) packages" \
   && echo "[build][layer2.5] A2A gateway: $(($(date +%s) - START))s"
 
-# ── Layer 3 (node): Scripts + Config ──────────────────────────────────────────
+# ── Layer 3 (node): Scripts + Config + Frontend ──────────────────────────────
 COPY --chown=node:node scripts /home/node/scripts
+COPY --chown=node:node frontend /home/node/frontend
 COPY --chown=node:node openclaw.json /home/node/scripts/openclaw.json.default
-RUN chmod +x /home/node/scripts/entrypoint.sh /home/node/scripts/sync_hf.py
+RUN chmod +x /home/node/scripts/entrypoint.sh /home/node/scripts/sync_hf.py \
+  && VERSION_TS=$(date +%s) \
+  && sed "s/{{VERSION_TIMESTAMP}}/${VERSION_TS}/g" /home/node/frontend/electron-standalone.html > /home/node/frontend/index.html \
+  && echo "[build] Frontend index.html generated (timestamp=${VERSION_TS})"
 
 ENV NODE_ENV=production
 ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/app/openclaw/empty-bundled-plugins

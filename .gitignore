@@ -9,3 +9,4 @@ node_modules/
 # 日志与临时
 *.log
 .DS_Store
+frontend/index.html
