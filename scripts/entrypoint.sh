@@ -26,8 +26,8 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts
 # Enable Telegram API proxy (redirects fetch() to working mirror if needed)
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/telegram-proxy.cjs"
 
-# Auto-fill gateway token in Control UI (redirects "/" to "/?token=GATEWAY_TOKEN")
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /home/node/scripts/token-redirect.cjs"
+# Token redirect removed — /admin route in a2a-proxy.cjs now handles token injection
+# The pixel office animation is served at / instead
 
 # ── Extensions symlink ──────────────────────────────────────────────────────
 SYMLINK_START=$(date +%s)
