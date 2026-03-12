@@ -382,7 +382,7 @@ class OpenClawFullSync:
             with open(config_path, "w") as f:
                 json.dump({
                     "gateway": {
-                        "mode": "local", "bind": "lan", "port": 7861,
+                        "mode": "local", "bind": "lan", "port": 7860,
                         "trustedProxies": ["0.0.0.0/0"],
                         "controlUi": {
                             "allowInsecureAuth": True,
@@ -440,7 +440,7 @@ class OpenClawFullSync:
             data["gateway"] = {
                 "mode": "local",
                 "bind": "lan",
-                "port": 7861,
+                "port": 7860,
                 "auth": {"token": GATEWAY_TOKEN},
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
@@ -449,7 +449,7 @@ class OpenClawFullSync:
                     "allowedOrigins": allowed_origins
                 }
             }
-            print(f"[SYNC] Set gateway config (port=7861, auth=token, origins={len(allowed_origins)})")
+            print(f"[SYNC] Set gateway config (port=7860, auth=token, origins={len(allowed_origins)})")
 
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
