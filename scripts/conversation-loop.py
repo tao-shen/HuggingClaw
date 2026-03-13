@@ -260,8 +260,9 @@ def action_check_health():
         stage = info.runtime.stage if info.runtime else "NO_RUNTIME"
         child_state["stage"] = stage
         child_state["alive"] = (stage == "RUNNING")
-        if stage in ("RUNTIME_ERROR", "BUILD_ERROR"):
-            # Clear write dedup + knowledge cache so agents can re-read & re-write files to fix
+        if stage in ("RUNTIME_ERROR", "BUILD_ERROR", "RUNNING"):
+            # Clear write dedup so agents can re-write files to fix issues
+            # RUNNING included: API may be unresponsive, agents need to patch code
             if files_written_this_cycle:
                 print(f"[DEDUP-CLEAR] {stage} detected — unlocking {len(files_written_this_cycle)} file(s) for re-write: {files_written_this_cycle}")
                 for f in files_written_this_cycle:
