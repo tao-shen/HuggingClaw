@@ -544,8 +544,9 @@ def parse_and_execute_actions(raw_text, depth=0):
                           "Writing the same file twice wastes a rebuild cycle.")
                 results.append({"action": key, "result": result})
                 print(f"[BLOCKED] {key} — duplicate write this cycle")
-            # Guard: block write_file during BUILDING/APP_STARTING/RESTARTING
-            elif target == "space" and child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+            # Guard: block write_file during BUILDING/RESTARTING (would reset build)
+            # APP_STARTING is allowed — writing triggers a new build which may fix the stuck state
+            elif target == "space" and child_state["stage"] in ("BUILDING", "RESTARTING"):
                 result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. "
                           "Writing to Space during build RESETS the entire build from scratch. "
                           "Wait for it to finish, then try again.")
@@ -598,10 +599,11 @@ def parse_and_execute_actions(raw_text, depth=0):
         if len(results) >= MAX_ACTIONS_PER_TURN:
             break
 
-        # Block restart/write when Cain is building/starting — just wait
-        if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
+        # Block restart/write when Cain is building/restarting — would reset build
+        # APP_STARTING is allowed so agents can fix stuck startups
+        if child_state["stage"] in ("BUILDING", "RESTARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
             result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. "
-                      "Do NOT restart or make changes — wait for it to finish starting. "
+                      "Do NOT restart or make changes — wait for it to finish. "
                       "Every write_file during build RESETS the entire build from scratch. "
                       "Use [ACTION: check_health] to monitor progress.")
             results.append({"action": action_str, "result": result})
@@ -692,10 +694,10 @@ def parse_and_execute_actions(raw_text, depth=0):
                 break
 
             # Apply same blocking rules
-            if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
-                result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. Wait for it to finish starting. Writing during build RESETS it.")
+            if child_state["stage"] in ("BUILDING", "RESTARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
+                result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. Wait for it to finish. Writing during build RESETS it.")
                 results.append({"action": action_str, "result": result})
-                print(f"[BLOCKED-emoji] {name} — Cain is {child_state['stage']}")
+                print(f"[BLOCKED] sub-agent {name} — Cain is {child_state['stage']}")
                 break
 
             # Rebuild cooldown (emoji parser)
