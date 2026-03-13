@@ -4454,43 +4454,21 @@ function toggleBrokerPanel() {
                         sprite = game.add.sprite(p.x, p.y, animKey, f).setOrigin(0.5, 1).setScale(1.1);
                         if (sprite.anims && sprite.anims.play) sprite.anims.play(animKey, true);
                     } else {
-                        // 非 demo 访客：优先用动画精灵（guest_anim_x），其次静态图，兜底星星
-                        // 先确定角色索引（1-6）
-                        let animIdx = agent.avatar
-                            ? parseInt((agent.avatar.match(/_(\d+)$/) || [])[1] || '0', 10)
-                            : 0;
-                        if (!animIdx || animIdx < 1 || animIdx > 6) {
-                            // Fixed mapping for known agents to avoid hash collisions
-                            const KNOWN_AGENTS = { 'main': 2, 'adam': 1, 'eve': 3 };
-                            const aid = String(agent.agentId || '');
-                            animIdx = KNOWN_AGENTS[aid.toLowerCase()];
-                            if (!animIdx) {
-                                let hash = 0;
-                                for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
-                                animIdx = (hash % 6) + 1;
-                            }
+                        // 非 demo 访客：使用 cats spritesheet 中的猫咪形象
+                        // Known agents get fixed cat frames; others hash to a frame
+                        const KNOWN_CAT_FRAMES = { 'adam': 1, 'eve': 3 };
+                        const aid = String(agent.agentId || '');
+                        let catFrame = KNOWN_CAT_FRAMES[aid.toLowerCase()];
+                        if (catFrame === undefined) {
+                            let hash = 0;
+                            for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
+                            catFrame = hash % 16;
                         }
-                        const animKey = `guest_anim_${animIdx}`;
-                        const animIdleKey = `guest_anim_${animIdx}_idle`;
 
-                        if (game.textures.exists(animKey) && game.anims.exists(animIdleKey)) {
-                            sprite = game.add.sprite(p.x, p.y, animKey).setOrigin(0.5, 1).setScale(4.0);
-                            sprite.anims.play(animIdleKey, true);
+                        if (game.textures.exists('cats')) {
+                            sprite = game.add.sprite(p.x, p.y, 'cats', catFrame).setOrigin(0.5, 1).setScale(0.6);
                         } else {
-                            const staticAvatarKey = agent.avatar && game.textures.exists(agent.avatar)
-                                ? agent.avatar
-                                : (() => {
-                                    const aid = String(agent.agentId || '');
-                                    let hash = 0;
-                                    for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
-                                    return GUEST_AVATARS[hash % GUEST_AVATARS.length];
-                                })();
-
-                            if (staticAvatarKey && game.textures.exists(staticAvatarKey)) {
-                                sprite = game.add.image(p.x, p.y, staticAvatarKey).setOrigin(0.5, 1).setScale(1.15);
-                            } else {
-                                sprite = game.add.text(p.x, p.y, '⭐', { fontFamily: 'ArkPixel, monospace', fontSize: '30px' }).setOrigin(0.5, 1);
-                            }
+                            sprite = game.add.text(p.x, p.y, '🐱', { fontFamily: 'ArkPixel, monospace', fontSize: '30px' }).setOrigin(0.5, 1);
                         }
                     }
                     sprite.setDepth(2600);
@@ -4501,7 +4479,7 @@ function toggleBrokerPanel() {
                     // demo 水星下移 10px（仅 demo_mercury）
                     const yOffset = (DEMO_MODE && (agent.agentId === 'demo_mercury' || agent.name === '水星')) ? 10 : 0;
 
-                    const nameTextY = isDemo ? ((p.y + yOffset) - 80) : ((p.y + yOffset) - 120);
+                    const nameTextY = isDemo ? ((p.y + yOffset) - 80) : ((p.y + yOffset) - 105);
                     const nameText = game.add.text(p.x, nameTextY, agent.name || '访客', {
                         fontFamily: 'ArkPixel, monospace',
                         fontSize: isDemo ? '16px' : '15px',
