@@ -442,7 +442,7 @@ class OpenClawFullSync:
                 "mode": "local",
                 "bind": "lan",
                 "port": 7860,
-                "auth": {"token": GATEWAY_TOKEN, "scope": "operator"},
+                "auth": {"token": GATEWAY_TOKEN},
                 "trustedProxies": ["0.0.0.0/0"],
                 "controlUi": {
                     "allowInsecureAuth": True,
@@ -455,8 +455,6 @@ class OpenClawFullSync:
             # Ensure agents defaults
             data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
             data.setdefault("session", {})["scope"] = "global"
-            # Grant operator scope for A2A gateway dispatch
-            data.setdefault("auth", {})["defaultScope"] = "operator"
 
             # Build providers from scratch — only include providers with active API keys.
             # This ensures removed secrets don't leave stale providers from backup.
@@ -531,7 +529,7 @@ class OpenClawFullSync:
                             "skills": [{"id": "chat", "name": "chat", "description": "Chat bridge"}]
                         },
                         "server": {"host": "0.0.0.0", "port": 18800},
-                        "security": {"inboundAuth": "none", "scope": "operator"},
+                        "security": {"inboundAuth": "none"},
                         "routing": {"defaultAgentId": "main"},
                         "peers": peers
                     }
