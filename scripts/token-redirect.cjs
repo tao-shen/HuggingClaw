@@ -212,6 +212,17 @@ http.Server.prototype.emit = function (event, ...args) {
       return true;
     }
 
+    // GET /api/conv-loop-log → tail conversation-loop log for remote diagnostics
+    if (pathname === '/api/conv-loop-log' && req.method === 'GET') {
+      const logPath = '/tmp/conversation-loop.log';
+      fs.readFile(logPath, 'utf8', (err, data) => {
+        const lines = err ? [`No log file: ${err.code}`] : data.split('\n').slice(-50);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ lines, officeMode: OFFICE_MODE }));
+      });
+      return true;
+    }
+
     // POST /api/bubble → set bubble text (used by conversation orchestrator)
     if (pathname === '/api/bubble' && req.method === 'POST') {
       let body = '';
