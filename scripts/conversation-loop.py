@@ -58,7 +58,7 @@ print(f"[init] Zhipu key: {ZHIPU_KEY[:8]}...{ZHIPU_KEY[-4:]}")
 print(f"[init] HF token:  {HF_TOKEN[:8]}...{HF_TOKEN[-4:]}")
 
 # ── HuggingFace API ────────────────────────────────────────────────────────────
-from huggingface_hub import HfApi, duplicate_space, create_repo
+from huggingface_hub import HfApi, create_repo
 hf_api = HfApi(token=HF_TOKEN)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -125,12 +125,13 @@ def create_child_space():
 
         # 3. Duplicate Space from Adam
         print(f"[birth] Duplicating {SOURCE_SPACE_ID} → {CHILD_SPACE_ID}")
-        duplicate_space(
+        hf_api.duplicate_space(
             from_id=SOURCE_SPACE_ID,
             to_id=CHILD_SPACE_ID,
             token=HF_TOKEN,
             exist_ok=True,
             private=False,
+            hardware="cpu-basic",
         )
         print(f"[birth] Space duplicated")
 
