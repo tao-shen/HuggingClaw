@@ -4724,7 +4724,8 @@ function toggleBrokerPanel() {
                 .then(response => response.json())
                 .then(data => {
                     // 无论后端返回是否为数组，demo=1 都应保证本地 demo 访客可见
-                    guestAgents = Array.isArray(data) ? data : [];
+                    // Filter out 'main' (HuggingClaw) — Star character already represents it
+                    guestAgents = (Array.isArray(data) ? data : []).filter(a => a.agentId !== 'main');
 
                     // 新访客检测：触发 Star 欢迎气泡（只欢迎真实访客，不欢迎 demo）
                     try {
