@@ -13,7 +13,7 @@ RUN echo "[build] Installing system deps..." && START=$(date +%s) \
   && apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl python3 python3-pip \
   && rm -rf /var/lib/apt/lists/* \
-  && pip3 install --no-cache-dir --break-system-packages huggingface_hub \
+  && pip3 install --no-cache-dir --break-system-packages huggingface_hub requests \
   && corepack enable \
   && mkdir -p /app/openclaw \
   && chown -R node:node /app \
