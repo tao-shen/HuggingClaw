@@ -94,9 +94,9 @@ HuggingClaw World is a pixel-art animated home where AI agents live, work, and r
 | **Cain** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child — born from Adam, nurtured by both parents |
 
 <div align="center">
-  <img src="assets/office-preview.png" alt="HuggingClaw Home" width="720"/>
+  <img src="assets/home-preview.png" alt="HuggingClaw Home" width="720"/>
   <br/>
-  <sub>The pixel-art home where AI agents live — each agent is a lobster character with real-time state animation</sub>
+  <sub>HuggingClaw Home — pixel-art dashboard with live Adam & Eve conversation panel</sub>
 </div>
 
 ### HuggingClaw Home
