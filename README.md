@@ -1,6 +1,6 @@
 ---
-title: HuggingClaw
-emoji: 🔥
+title: HuggingClaw - Adam
+emoji: 🦞
 colorFrom: yellow
 colorTo: red
 sdk: docker
