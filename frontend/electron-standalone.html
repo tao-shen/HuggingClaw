@@ -1480,7 +1480,15 @@
         }
 
         /* 手机端专属适配（不影响桌面） */
-        @media (max-width: 900px), (pointer: coarse) {
+        /* 窄桌面/平板横屏：chatlog 稍窄 */
+        @media (min-width: 901px) and (max-width: 1200px) {
+            #chatlog-panel {
+                width: 240px;
+            }
+        }
+
+        /* 移动端 */
+        @media (max-width: 900px) {
             html, body {
                 height: 100%;
             }
@@ -1488,7 +1496,7 @@
             body {
                 padding: 0;
                 gap: 0;
-                overflow-x: auto;
+                overflow-x: hidden;
                 overflow-y: auto;
                 -webkit-overflow-scrolling: touch;
                 align-items: stretch;
@@ -1496,12 +1504,12 @@
 
             #game-container {
                 width: 100vw;
-                height: 66.666vh; /* 办公室占 2/3 屏幕高度 */
                 max-width: 100vw;
-                max-height: 66.666vh;
                 border-width: 0;
                 border-radius: 0;
-                aspect-ratio: auto;
+                aspect-ratio: 16 / 9;
+                height: auto;
+                max-height: 56.25vw; /* 16:9 */
                 flex: 0 0 auto;
                 touch-action: auto;
                 overflow: hidden;
@@ -1510,6 +1518,8 @@
             #stage-row {
                 flex-direction: column;
                 gap: 0;
+                width: 100vw;
+                max-width: 100vw;
             }
 
             #main-stage {
@@ -1521,16 +1531,22 @@
             #chatlog-panel {
                 width: 100vw;
                 height: auto;
-                max-height: 33vh;
+                max-height: 35vh;
                 border-left: 0;
                 border-right: 0;
                 border-radius: 0;
+                border-top: 2px solid #0e1119;
+            }
+
+            #chatlog-content {
+                max-height: calc(35vh - 40px); /* 标题约 40px */
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
             }
 
             #bottom-panels {
                 width: 100vw;
                 max-width: 100vw;
-                min-height: 33.334vh; /* 余下约 1/3 可见区 */
                 padding: 10px 10px 16px;
                 display: flex;
                 flex-direction: column;
@@ -1650,6 +1666,33 @@
             }
             #asset-upload-panel button {
                 min-height: 38px;
+            }
+        }
+
+        /* 手机横屏：高度极低，压缩 chatlog */
+        @media (max-width: 900px) and (max-height: 500px) {
+            #game-container {
+                max-height: 70vh;
+            }
+            #chatlog-panel {
+                max-height: 25vh;
+            }
+            #chatlog-content {
+                max-height: calc(25vh - 36px);
+            }
+        }
+
+        /* 小屏手机（<= 400px 宽）：更紧凑 */
+        @media (max-width: 400px) {
+            #chatlog-panel {
+                padding: 8px 10px;
+            }
+            #chatlog-title {
+                font-size: 12px;
+            }
+            #chatlog-content {
+                font-size: 12px;
+                line-height: 1.5;
             }
         }
     </style>
@@ -4897,11 +4940,19 @@ function toggleBrokerPanel() {
             // 启动 Phaser 游戏
             new Phaser.Game(config);
 
-            // 同步 chatlog-panel 高度与 game-container
+            // 同步 chatlog-panel 高度与 game-container（仅桌面端）
             function syncChatlogHeight() {
-                const gc = document.getElementById('game-container');
                 const cl = document.getElementById('chatlog-panel');
-                if (gc && cl) {
+                if (!cl) return;
+                // 移动端：清除 JS 设置的高度，让 CSS 接管
+                if (window.innerWidth <= 900) {
+                    cl.style.height = '';
+                    cl.style.maxHeight = '';
+                    return;
+                }
+                // 桌面端：同步高度到 game-container
+                const gc = document.getElementById('game-container');
+                if (gc) {
                     const h = gc.offsetHeight;
                     if (h > 100) {
                         cl.style.height = h + 'px';
