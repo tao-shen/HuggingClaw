@@ -1,12 +1,13 @@
 {
   "id": "coding-agent",
   "name": "Coding Agent",
-  "description": "HuggingFace Space coding tools — read, write, edit, search, and manage code on HF Spaces with syntax validation",
-  "version": "1.0.0",
+  "description": "Claude Code sub-agent for autonomous coding on HF Spaces — powered by Zhipu GLM via z.ai",
+  "version": "2.0.0",
   "defaultConfig": {
     "targetSpace": "",
     "targetDataset": "",
-    "hfToken": ""
+    "hfToken": "",
+    "zaiApiKey": ""
   },
   "configSchema": {
     "type": "object",
@@ -23,10 +24,15 @@
       "hfToken": {
         "type": "string",
         "description": "HuggingFace API token (or use HF_TOKEN env var)"
+      },
+      "zaiApiKey": {
+        "type": "string",
+        "description": "Z.AI API key for Claude Code backend (or use ZAI_API_KEY / ZHIPU_API_KEY env var)"
       }
     }
   },
   "uiHints": {
-    "hfToken": { "sensitive": true }
+    "hfToken": { "sensitive": true },
+    "zaiApiKey": { "sensitive": true }
   }
 }

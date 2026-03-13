@@ -76,6 +76,9 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 # Zhipu AI (z.ai) API key (optional; GLM-4 series, Anthropic-compatible endpoint)
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 
+# Z.AI API key (optional; used by Claude Code backend via api.z.ai)
+ZAI_API_KEY = os.environ.get("ZAI_API_KEY", "")
+
 # Gateway token (default: huggingclaw; override via GATEWAY_TOKEN env var)
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "huggingclaw")
 
@@ -522,9 +525,10 @@ class OpenClawFullSync:
                         "targetSpace": CODING_TARGET_SPACE,
                         "targetDataset": CODING_TARGET_DATASET,
                         "hfToken": HF_TOKEN or "",
+                        "zaiApiKey": ZAI_API_KEY or ZHIPU_API_KEY or "",
                     }
                 }
-                print(f"[SYNC] Coding agent configured: space={CODING_TARGET_SPACE}, dataset={CODING_TARGET_DATASET}")
+                print(f"[SYNC] Coding agent configured: space={CODING_TARGET_SPACE}, dataset={CODING_TARGET_DATASET}, zaiKey={'set' if (ZAI_API_KEY or ZHIPU_API_KEY) else 'missing'}")
             if "telegram" not in data["plugins"]["entries"]:
                 data["plugins"]["entries"]["telegram"] = {"enabled": True}
             elif isinstance(data["plugins"]["entries"]["telegram"], dict):
@@ -674,6 +678,8 @@ class OpenClawFullSync:
             env["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
         if ZHIPU_API_KEY:
             env["ZHIPU_API_KEY"] = ZHIPU_API_KEY
+        if ZAI_API_KEY:
+            env["ZAI_API_KEY"] = ZAI_API_KEY
         if not OPENAI_API_KEY and not OPENROUTER_API_KEY and not ZHIPU_API_KEY:
             print(f"[SYNC] WARNING: No API key set (OPENAI/OPENROUTER/ZHIPU), LLM features may not work")
 

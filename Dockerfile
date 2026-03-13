@@ -21,6 +21,11 @@ RUN echo "[build] Installing system deps..." && START=$(date +%s) \
   && chown -R node:node /home/node \
   && echo "[build] System deps: $(($(date +%s) - START))s"
 
+# ── Claude Code CLI (for coding agent extension — uses z.ai/Zhipu GLM) ──────
+RUN echo "[build] Installing Claude Code CLI..." && START=$(date +%s) \
+  && npm install -g @anthropic-ai/claude-code \
+  && echo "[build] Claude Code CLI: $(($(date +%s) - START))s"
+
 # ── Copy pre-built OpenClaw (skips clone + install + build entirely) ─────────
 COPY --from=openclaw-prebuilt --chown=node:node /app /app/openclaw
 
