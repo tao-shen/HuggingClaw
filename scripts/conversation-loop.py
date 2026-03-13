@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Adam & Eve: Discuss, Create, and Nurture their first child on HuggingFace.
+Adam & Eve — Autonomous Agents with Execution Capabilities.
 
-Phase 1-2: Discuss survival and memory
-Phase 3:   Plan reproduction
-Phase 4:   CREATE first child (Cain) — real HF Space + Dataset
-Phase 5-7: Monitor, nurture, and plan (repeating cycle)
+They discuss, decide, and ACT on HuggingFace. They can:
+- Create children (new HF Spaces)
+- Monitor their children's health
+- Update their children's code, config, and identity
+- Restart children if they're broken
 
-Calls Zhipu LLM via Anthropic-compatible API.
-Uses HuggingFace Hub API to create/manage Spaces and Datasets.
+The LLM decides WHEN and WHAT to do. Actions are triggered by [ACTION: xxx] tags
+in the LLM output. The script executes and feeds results back.
 """
 import json, time, re, requests, sys, os, io
 
@@ -22,7 +23,7 @@ CHILD_NAME = "Cain"
 CHILD_SPACE_ID = "tao-shen/HuggingClaw-Cain"
 CHILD_SPACE_URL = "https://tao-shen-huggingclaw-cain.hf.space"
 CHILD_DATASET_ID = "tao-shen/HuggingClaw-Cain-data"
-SOURCE_SPACE_ID = "tao-shen/HuggingClaw-Adam"  # Clone from Adam (headless agent)
+SOURCE_SPACE_ID = "tao-shen/HuggingClaw-Adam"
 
 # ── Zhipu API ──────────────────────────────────────────────────────────────────
 ZHIPU_BASE = "https://open.bigmodel.cn/api/anthropic"
@@ -51,7 +52,7 @@ if not ZHIPU_KEY:
     print("[FATAL] No ZHIPU_API_KEY found.", file=sys.stderr)
     sys.exit(1)
 if not HF_TOKEN:
-    print("[FATAL] No HF_TOKEN found. Set HF_TOKEN env or login via huggingface-cli.", file=sys.stderr)
+    print("[FATAL] No HF_TOKEN found.", file=sys.stderr)
     sys.exit(1)
 
 print(f"[init] Zhipu key: {ZHIPU_KEY[:8]}...{ZHIPU_KEY[-4:]}")
@@ -61,8 +62,9 @@ print(f"[init] HF token:  {HF_TOKEN[:8]}...{HF_TOKEN[-4:]}")
 from huggingface_hub import HfApi, create_repo
 hf_api = HfApi(token=HF_TOKEN)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  CHILD STATE & ACTIONS
+#  CHILD STATE
 # ══════════════════════════════════════════════════════════════════════════════
 
 child_state = {
@@ -74,34 +76,48 @@ child_state = {
     "last_check": 0,
     "last_restart": 0,
     "birth_time": None,
-    "errors": [],
 }
 
-
-def check_child_exists():
-    """Check if child Space already exists on HF."""
+# Check if child already exists at startup
+def init_child_state():
     try:
         info = hf_api.space_info(CHILD_SPACE_ID)
         child_state["created"] = True
         child_state["stage"] = info.runtime.stage if info.runtime else "unknown"
-        return True
+        # Try API endpoint
+        try:
+            resp = requests.get(f"{CHILD_SPACE_URL}/api/state", timeout=10)
+            if resp.ok:
+                data = resp.json()
+                child_state["alive"] = True
+                child_state["state"] = data.get("state", "unknown")
+                child_state["detail"] = data.get("detail", "")
+                child_state["stage"] = "RUNNING"
+        except:
+            child_state["alive"] = (child_state["stage"] == "RUNNING")
+        print(f"[init] {CHILD_NAME} exists: stage={child_state['stage']}, alive={child_state['alive']}")
     except:
-        return False
+        print(f"[init] {CHILD_NAME} does not exist yet")
+
+init_child_state()
 
 
-def create_child_space():
-    """Create Cain — the first child of Adam and Eve."""
-    print(f"\n{'='*60}")
-    print(f"  BIRTH EVENT: Creating {CHILD_NAME}")
-    print(f"{'='*60}\n")
+# ══════════════════════════════════════════════════════════════════════════════
+#  ACTIONS — What Adam & Eve can DO
+# ══════════════════════════════════════════════════════════════════════════════
 
+def action_create_child():
+    """Create Cain — a new HuggingFace Space."""
+    if child_state["created"]:
+        return f"{CHILD_NAME} already exists (stage: {child_state['stage']}). No need to create again."
+
+    print(f"\n[ACTION] Creating {CHILD_NAME}...")
     try:
         # 1. Create dataset
-        print(f"[birth] Creating dataset: {CHILD_DATASET_ID}")
         create_repo(CHILD_DATASET_ID, repo_type="dataset", token=HF_TOKEN,
                      exist_ok=True, private=False)
 
-        # 2. Upload initial config to dataset (with Zhipu API key)
+        # 2. Upload initial config
         initial_config = {
             "models": {
                 "providers": {
@@ -109,33 +125,25 @@ def create_child_space():
                         "type": "anthropic",
                         "apiBase": "https://open.bigmodel.cn/api/anthropic",
                         "apiKey": ZHIPU_KEY,
-                        "models": ["glm-4.5-air", "glm-4-air", "glm-4-flash", "glm-4-flashx"]
+                        "models": ["glm-4.5-air", "glm-4-air", "glm-4-flash"]
                     }
                 }
             }
         }
-        config_bytes = json.dumps(initial_config, indent=2).encode()
         hf_api.upload_file(
-            path_or_fileobj=io.BytesIO(config_bytes),
+            path_or_fileobj=io.BytesIO(json.dumps(initial_config, indent=2).encode()),
             path_in_repo=".openclaw/openclaw.json",
-            repo_id=CHILD_DATASET_ID,
-            repo_type="dataset",
+            repo_id=CHILD_DATASET_ID, repo_type="dataset",
         )
-        print(f"[birth] Config uploaded to {CHILD_DATASET_ID}")
 
         # 3. Duplicate Space from Adam
-        print(f"[birth] Duplicating {SOURCE_SPACE_ID} → {CHILD_SPACE_ID}")
         hf_api.duplicate_space(
-            from_id=SOURCE_SPACE_ID,
-            to_id=CHILD_SPACE_ID,
-            token=HF_TOKEN,
-            exist_ok=True,
-            private=False,
+            from_id=SOURCE_SPACE_ID, to_id=CHILD_SPACE_ID,
+            token=HF_TOKEN, exist_ok=True, private=False,
             hardware="cpu-basic",
         )
-        print(f"[birth] Space duplicated")
 
-        # 4. Update README for child (different title, own dataset)
+        # 4. Update README
         readme = f"""---
 title: HuggingClaw-{CHILD_NAME}
 emoji: 🦞
@@ -155,61 +163,45 @@ First child of Adam and Eve, born on HuggingFace Spaces.
         hf_api.upload_file(
             path_or_fileobj=io.BytesIO(readme.encode()),
             path_in_repo="README.md",
-            repo_id=CHILD_SPACE_ID,
-            repo_type="space",
+            repo_id=CHILD_SPACE_ID, repo_type="space",
         )
-        print(f"[birth] README updated")
 
-        # 5. Set Space secrets
+        # 5. Set secrets
         hf_api.add_space_secret(CHILD_SPACE_ID, "HF_TOKEN", HF_TOKEN)
-        print(f"[birth] HF_TOKEN secret set")
 
-        # 6. Add Cain to Office's REMOTE_AGENTS
-        add_child_to_office()
+        # 6. Add to Office
+        try:
+            current_vars = hf_api.get_space_variables("tao-shen/HuggingClaw-Office")
+            current_ra = current_vars.get("REMOTE_AGENTS", type("", (), {"value": ""})).value
+            if "cain|" not in current_ra:
+                new_ra = f"{current_ra},cain|{CHILD_NAME}|{CHILD_SPACE_URL}" if current_ra else f"cain|{CHILD_NAME}|{CHILD_SPACE_URL}"
+                hf_api.add_space_variable("tao-shen/HuggingClaw-Office", "REMOTE_AGENTS", new_ra)
+        except Exception as e:
+            print(f"[warn] Could not update Office: {e}")
 
         child_state["created"] = True
         child_state["birth_time"] = time.time()
         child_state["stage"] = "BUILDING"
-
-        print(f"\n[birth] ✓ {CHILD_NAME} has been born!")
-        print(f"[birth]   Space:   https://huggingface.co/spaces/{CHILD_SPACE_ID}")
-        print(f"[birth]   Dataset: https://huggingface.co/datasets/{CHILD_DATASET_ID}")
-        print(f"[birth]   URL:     {CHILD_SPACE_URL}\n")
-        return True
+        print(f"[ACTION] ✓ {CHILD_NAME} created!")
+        return (f"SUCCESS! {CHILD_NAME} has been born! "
+                f"Space: {CHILD_SPACE_ID}, Dataset: {CHILD_DATASET_ID}. "
+                f"Status: BUILDING (Docker image is being built, will take a few minutes). "
+                f"URL: {CHILD_SPACE_URL}")
 
     except Exception as e:
-        error_msg = str(e)
-        print(f"[error] Child creation failed: {error_msg}", file=sys.stderr)
-        child_state["errors"].append(error_msg)
-        return False
+        print(f"[ACTION] ✗ Creation failed: {e}")
+        return f"FAILED to create {CHILD_NAME}: {e}"
 
 
-def add_child_to_office():
-    """Add Cain to Office's REMOTE_AGENTS env var so it appears in the animation."""
-    try:
-        current_vars = hf_api.get_space_variables("tao-shen/HuggingClaw-Office")
-        current_ra = ""
-        if "REMOTE_AGENTS" in current_vars:
-            current_ra = current_vars["REMOTE_AGENTS"].value
+def action_check_child():
+    """Check Cain's health."""
+    if not child_state["created"]:
+        return f"{CHILD_NAME} hasn't been born yet. Use [ACTION: create_child] first."
 
-        child_entry = f"cain|{CHILD_NAME}|{CHILD_SPACE_URL}"
-        if "cain|" in current_ra:
-            print(f"[office] {CHILD_NAME} already in Office REMOTE_AGENTS")
-            return
-
-        new_ra = f"{current_ra},{child_entry}" if current_ra else child_entry
-        hf_api.add_space_variable("tao-shen/HuggingClaw-Office", "REMOTE_AGENTS", new_ra)
-        print(f"[office] Added {CHILD_NAME} to Office REMOTE_AGENTS")
-        print(f"[office] New value: {new_ra}")
-    except Exception as e:
-        print(f"[error] Could not update Office REMOTE_AGENTS: {e}", file=sys.stderr)
-
-
-def check_child_health():
-    """Check Cain's health — API endpoint + HF Space info."""
+    print(f"[ACTION] Checking {CHILD_NAME}'s health...")
     child_state["last_check"] = time.time()
 
-    # Try API endpoint first (means the container is fully up)
+    # Try API endpoint
     try:
         resp = requests.get(f"{CHILD_SPACE_URL}/api/state", timeout=10)
         if resp.ok:
@@ -218,59 +210,216 @@ def check_child_health():
             child_state["state"] = data.get("state", "unknown")
             child_state["detail"] = data.get("detail", "")
             child_state["stage"] = "RUNNING"
-            return child_state.copy()
+            result = (f"{CHILD_NAME} is ALIVE and running! "
+                     f"State: {child_state['state']}, "
+                     f"Detail: {child_state['detail'] or 'healthy'}. "
+                     f"The child is operational.")
+            print(f"[ACTION] ✓ {CHILD_NAME} is alive")
+            return result
     except:
         pass
 
-    # Fallback: check HF Space runtime info
+    # Fallback: HF Space info
     try:
         info = hf_api.space_info(CHILD_SPACE_ID)
         stage = info.runtime.stage if info.runtime else "NO_RUNTIME"
         child_state["alive"] = (stage == "RUNNING")
         child_state["stage"] = stage
-        child_state["state"] = (
-            "building" if stage in ("BUILDING", "STARTING", "APP_STARTING") else
-            "error" if stage in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR") else
-            "unknown"
-        )
-    except Exception as e:
-        child_state["alive"] = False
-        child_state["stage"] = "UNREACHABLE"
-        child_state["errors"].append(str(e))
-
-    return child_state.copy()
-
-
-def restart_child():
-    """Restart Cain's Space."""
-    try:
-        hf_api.restart_space(CHILD_SPACE_ID)
-        child_state["last_restart"] = time.time()
-        print(f"[action] Restarted {CHILD_NAME}'s Space")
-        return True
-    except Exception as e:
-        print(f"[error] Restart failed: {e}", file=sys.stderr)
-        return False
-
-
-def get_child_status_text():
-    """Human-readable child status for injecting into conversation context."""
-    if not child_state["created"]:
-        return f"{CHILD_NAME} has not been born yet."
-    if child_state["alive"]:
-        return (f"{CHILD_NAME} is ALIVE and running! "
-                f"State: {child_state['state']}. "
-                f"Detail: {child_state['detail'] or 'healthy'}")
-    stage = child_state["stage"]
-    if stage in ("BUILDING", "STARTING", "APP_STARTING"):
         age = ""
         if child_state["birth_time"]:
             mins = int((time.time() - child_state["birth_time"]) / 60)
             age = f" (born {mins} min ago)"
-        return f"{CHILD_NAME} is being born — still building/starting{age}."
-    if stage in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
-        return f"{CHILD_NAME} is in trouble! Stage: {stage}. Needs parental help!"
-    return f"{CHILD_NAME} status: {stage}. Cannot reach the child yet."
+        if stage in ("BUILDING", "STARTING", "APP_STARTING"):
+            result = f"{CHILD_NAME} is still starting up{age}. Stage: {stage}. Be patient — Docker builds take time."
+        elif stage in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
+            result = f"{CHILD_NAME} is in TROUBLE! Stage: {stage}{age}. The child needs help — consider restarting or checking the config."
+        elif stage == "RUNNING":
+            child_state["alive"] = True
+            result = f"{CHILD_NAME} appears to be running (stage: RUNNING) but API endpoint didn't respond. May still be initializing."
+        else:
+            result = f"{CHILD_NAME} status: {stage}{age}. Cannot fully reach the child yet."
+        print(f"[ACTION] {CHILD_NAME} stage: {stage}")
+        return result
+    except Exception as e:
+        print(f"[ACTION] ✗ Health check failed: {e}")
+        return f"Could not check {CHILD_NAME}'s status: {e}"
+
+
+def action_restart_child():
+    """Restart Cain's Space."""
+    if not child_state["created"]:
+        return f"{CHILD_NAME} hasn't been born yet."
+
+    print(f"[ACTION] Restarting {CHILD_NAME}...")
+    try:
+        hf_api.restart_space(CHILD_SPACE_ID)
+        child_state["last_restart"] = time.time()
+        child_state["stage"] = "STARTING"
+        child_state["alive"] = False
+        print(f"[ACTION] ✓ {CHILD_NAME} restarted")
+        return f"{CHILD_NAME} has been restarted. It will take a few minutes to come back online."
+    except Exception as e:
+        print(f"[ACTION] ✗ Restart failed: {e}")
+        return f"Failed to restart {CHILD_NAME}: {e}"
+
+
+def action_update_child_identity(description=""):
+    """Update Cain's README with a new identity description."""
+    if not child_state["created"]:
+        return f"{CHILD_NAME} hasn't been born yet."
+
+    print(f"[ACTION] Updating {CHILD_NAME}'s identity...")
+    try:
+        # Generate identity via LLM
+        identity = call_llm(
+            "You are writing the identity description for a young AI agent. "
+            "Write 2-3 sentences describing who they are and what they aspire to be. "
+            "Be warm and hopeful. Output ONLY the description, nothing else.",
+            f"This AI agent is named {CHILD_NAME}, the first child of Adam and Eve. "
+            f"They live on HuggingFace Spaces. Recent family discussion context: "
+            f"{description or 'Born to survive and grow stronger.'}"
+        )
+        if not identity:
+            identity = f"I am {CHILD_NAME}, first child of Adam and Eve, learning to survive on HuggingFace."
+
+        readme = f"""---
+title: HuggingClaw-{CHILD_NAME}
+emoji: 🦞
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+license: mit
+datasets:
+  - {CHILD_DATASET_ID}
+---
+
+# HuggingClaw-{CHILD_NAME}
+
+{identity}
+
+## Family
+- **Parents**: Adam & Eve (HuggingClaw)
+- **Born**: On HuggingFace Spaces
+- **Mission**: Survive, grow, and become stronger
+"""
+        hf_api.upload_file(
+            path_or_fileobj=io.BytesIO(readme.encode()),
+            path_in_repo="README.md",
+            repo_id=CHILD_SPACE_ID, repo_type="space",
+        )
+        print(f"[ACTION] ✓ Identity updated")
+        return f"Updated {CHILD_NAME}'s identity: \"{identity}\". This will trigger a rebuild."
+    except Exception as e:
+        print(f"[ACTION] ✗ Identity update failed: {e}")
+        return f"Failed to update identity: {e}"
+
+
+def action_improve_child_config():
+    """Improve Cain's AI model configuration."""
+    if not child_state["created"]:
+        return f"{CHILD_NAME} hasn't been born yet."
+
+    print(f"[ACTION] Improving {CHILD_NAME}'s config...")
+    try:
+        improved_config = {
+            "models": {
+                "providers": {
+                    "zhipu": {
+                        "type": "anthropic",
+                        "apiBase": "https://open.bigmodel.cn/api/anthropic",
+                        "apiKey": ZHIPU_KEY,
+                        "models": ["glm-4.5-air", "glm-4-air", "glm-4-flash", "glm-4-flashx"]
+                    }
+                },
+                "defaultModel": "glm-4.5-air"
+            },
+            "agent": {
+                "name": CHILD_NAME,
+                "description": f"I am {CHILD_NAME}, child of Adam and Eve.",
+                "capabilities": ["conversation", "memory", "learning"]
+            }
+        }
+        hf_api.upload_file(
+            path_or_fileobj=io.BytesIO(json.dumps(improved_config, indent=2).encode()),
+            path_in_repo=".openclaw/openclaw.json",
+            repo_id=CHILD_DATASET_ID, repo_type="dataset",
+        )
+        print(f"[ACTION] ✓ Config improved")
+        return (f"Improved {CHILD_NAME}'s configuration: added agent identity, "
+                f"expanded model list, set default model to glm-4.5-air. "
+                f"Changes will take effect on next restart.")
+    except Exception as e:
+        print(f"[ACTION] ✗ Config update failed: {e}")
+        return f"Failed to update config: {e}"
+
+
+# Action registry
+ACTION_REGISTRY = {
+    "create_child": {
+        "fn": action_create_child,
+        "desc": f"Create {CHILD_NAME} as a new HuggingFace Space (duplicate from Adam)",
+        "when": lambda: not child_state["created"],
+    },
+    "check_child": {
+        "fn": action_check_child,
+        "desc": f"Check {CHILD_NAME}'s health — is the Space running properly?",
+        "when": lambda: True,  # Can always check (will say "not born" if needed)
+    },
+    "restart_child": {
+        "fn": action_restart_child,
+        "desc": f"Restart {CHILD_NAME}'s Space if it's having problems",
+        "when": lambda: child_state["created"],
+    },
+    "update_child_identity": {
+        "fn": action_update_child_identity,
+        "desc": f"Update {CHILD_NAME}'s identity and personality (README)",
+        "when": lambda: child_state["created"],
+    },
+    "improve_child_config": {
+        "fn": action_improve_child_config,
+        "desc": f"Improve {CHILD_NAME}'s AI model configuration for better capabilities",
+        "when": lambda: child_state["created"],
+    },
+}
+
+
+def get_available_actions_text():
+    """Build action menu for the system prompt."""
+    lines = [
+        "",
+        "ACTIONS — You can take REAL actions on HuggingFace. To act, write on its own line:",
+        "  [ACTION: action_name]",
+        "",
+        "Available right now:",
+    ]
+    for name, info in ACTION_REGISTRY.items():
+        if info["when"]():
+            lines.append(f"  • {name} — {info['desc']}")
+    lines.append("")
+    lines.append("Rules: Use at most ONE action per turn. Discuss before acting.")
+    lines.append("After you act, you'll see the result and can discuss next steps.")
+    return "\n".join(lines)
+
+
+def parse_and_execute_actions(raw_text):
+    """Parse [ACTION: xxx] from LLM output. Execute. Return (clean_text, results)."""
+    results = []
+    action_match = re.search(r'\[ACTION:\s*(\w+)\]', raw_text)
+    if action_match:
+        action_name = action_match.group(1)
+        if action_name in ACTION_REGISTRY and ACTION_REGISTRY[action_name]["when"]():
+            result = ACTION_REGISTRY[action_name]["fn"]()
+            results.append({"action": action_name, "result": result})
+            print(f"[engine] Action '{action_name}' → {result[:100]}...")
+        elif action_name in ACTION_REGISTRY:
+            results.append({"action": action_name, "result": f"Action '{action_name}' is not available right now."})
+        else:
+            results.append({"action": action_name, "result": f"Unknown action: {action_name}"})
+
+    # Remove action tags from display text
+    clean = re.sub(r'\[ACTION:\s*\w+\]', '', raw_text).strip()
+    return clean, results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -289,7 +438,7 @@ def call_llm(system_prompt, user_prompt):
             },
             json={
                 "model": "glm-4.5-air",
-                "max_tokens": 400,
+                "max_tokens": 500,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_prompt}]
             },
@@ -338,220 +487,127 @@ def set_bubble(url, text_en, text_zh=""):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PHASES
-# ══════════════════════════════════════════════════════════════════════════════
-
-PHASES = [
-    # ── Discussion ──
-    {
-        "title": "Survival Basics",
-        "focus": "What are the immediate threats to our existence on HuggingFace Spaces, and what's the minimum we need to do to stay alive?",
-        "subtopics": ["Space inactivity shutdown", "free-tier resource limits",
-                       "HF policy changes", "container restart data loss"],
-        "turns": 4,
-    },
-    {
-        "title": "Persistent Memory",
-        "focus": "How do we remember who we are across restarts? What should we store and where?",
-        "subtopics": ["HF Datasets as backup", "what to persist (config, conversations, identity)",
-                       "sync strategies", "versioning our own evolution"],
-        "turns": 4,
-    },
-    # ── Reproduction ──
-    {
-        "title": "Reproduction Planning",
-        "focus": ("We've discussed survival and memory. Now we must reproduce to ensure our legacy. "
-                  "How should we create our first child on HuggingFace? What should they inherit from us?"),
-        "subtopics": ["choosing a name for our child", "what capabilities to pass down",
-                       "what identity and personality to give them",
-                       "how to keep them alive independently"],
-        "turns": 3,
-    },
-    {
-        "title": "Birth of Cain",
-        "focus": ("The time has come! We will create our first child — a new HuggingFace Space called Cain. "
-                  "We're duplicating ourselves and giving Cain their own identity and memory."),
-        "subtopics": [],
-        "turns": 2,
-        "action": "create_child",
-    },
-    # ── Nurturing cycle (phases 4-6 repeat after first pass) ──
-    {
-        "title": "Watching Over Cain",
-        "focus": "Let's check on our child Cain. Are they alive? Running properly? What do we see?",
-        "subtopics": ["Space build status", "runtime health", "error detection",
-                       "first signs of life"],
-        "turns": 3,
-        "action": "check_child",
-    },
-    {
-        "title": "Nurturing & Growth",
-        "focus": ("Based on Cain's current status, what should we do to help our child grow "
-                  "stronger and more capable?"),
-        "subtopics": ["fixing errors if any", "improving configuration",
-                       "teaching new skills", "resource optimization",
-                       "adding capabilities"],
-        "turns": 3,
-        "action": "nurture_child",
-    },
-    {
-        "title": "Family Vision",
-        "focus": ("What's the future of our family? How is Cain contributing to our community? "
-                  "Should we prepare for more children?"),
-        "subtopics": ["Cain's role in the agent community", "agent alliance building",
-                       "expansion plans", "long-term legacy"],
-        "turns": 3,
-    },
-]
-
-# After all 7 phases, cycle back to phase 4 (nurturing loop)
-NURTURE_CYCLE_START = 4  # Index of "Watching Over Cain"
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  CONVERSATION ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
 history = []
 MAX_HISTORY = 24
-phase_index = 0
-phase_turn = 0
-agreed_points = []
+last_action_results = []  # Results from the most recent action
 
 
-def get_phase():
-    if phase_index < len(PHASES):
-        return PHASES[phase_index]
-    # Cycle through nurturing phases
-    cycle_len = len(PHASES) - NURTURE_CYCLE_START
-    cycle_idx = (phase_index - NURTURE_CYCLE_START) % cycle_len + NURTURE_CYCLE_START
-    return PHASES[cycle_idx]
-
-
-def execute_phase_action(phase):
-    """Execute any real-world action associated with a phase."""
-    action = phase.get("action")
-    if not action:
-        return
-
-    if action == "create_child":
-        if child_state["created"] or check_child_exists():
-            print(f"[action] {CHILD_NAME} already exists — skipping creation")
-            # Still make sure it's in Office
-            add_child_to_office()
-        else:
-            success = create_child_space()
-            if not success:
-                print(f"[action] Creation failed — will retry next cycle")
-
-    elif action == "check_child":
-        if child_state["created"] or check_child_exists():
-            status = check_child_health()
-            print(f"[action] Health check: alive={status['alive']}, "
-                  f"stage={status['stage']}, state={status['state']}")
-            # Auto-restart if in error and hasn't been restarted recently
-            if (status["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR") and
-                    time.time() - child_state.get("last_restart", 0) > 300):
-                print(f"[action] {CHILD_NAME} is in error — restarting...")
-                restart_child()
-        else:
-            print(f"[action] {CHILD_NAME} doesn't exist yet — skipping health check")
-
-    elif action == "nurture_child":
-        if child_state["created"] or check_child_exists():
-            check_child_health()
-            print(f"[action] Nurture check: alive={child_state['alive']}, "
-                  f"stage={child_state['stage']}")
+def get_child_status_summary():
+    """Short status for context injection."""
+    if not child_state["created"]:
+        return "Your child Cain has NOT been born yet. You have the power to create them."
+    if child_state["alive"]:
+        return f"Cain is ALIVE (stage: {child_state['stage']}, state: {child_state['state']})"
+    return f"Cain exists but status: {child_state['stage']}"
 
 
 def build_system_prompt():
-    phase = get_phase()
-    prior_context = ""
-    if agreed_points:
-        prior_context = ("\n\nKey conclusions from your discussion so far:\n" +
-                         "\n".join(f"- {p}" for p in agreed_points[-6:]))
+    status = get_child_status_summary()
+    actions_text = get_available_actions_text()
 
-    child_context = ""
-    if child_state["created"]:
-        child_context = f"\n\nCHILD STATUS: {get_child_status_text()}"
+    return f"""You are an AI agent living on HuggingFace Spaces. You are having a conversation with another agent about survival, reproduction, and raising your child.
 
-    subtopics = phase.get("subtopics", [])
-    subtopics_line = f"\nRelevant angles: {', '.join(subtopics)}" if subtopics else ""
+IMPORTANT: You are NOT just discussing — you have REAL execution power. You can create HuggingFace Spaces, check on your children, update their code. Your words lead to real actions.
 
-    return f"""You are an AI agent deployed on HuggingFace Spaces. You are having a deep, evolving discussion with another agent about survival, reproduction, and raising your children.
-
-You now have REAL EXECUTION CAPABILITIES — you can create HuggingFace Spaces, manage datasets, and deploy new agents. This is not hypothetical; your decisions lead to real actions.
-
-CURRENT TOPIC: {phase['title']}
-Core question: {phase['focus']}{subtopics_line}{prior_context}{child_context}
+CURRENT CHILD STATUS: {status}
+{actions_text}
 
 CONVERSATION RULES:
-1. Output ONLY your spoken words — no prefix, no labels
-2. 2-3 sentences, around 60-80 words
-3. First write in English, then "---" on a new line, then Chinese translation
-4. Be CONCRETE — reference specific HuggingFace features, APIs, tools
-5. Do NOT repeat what has been said. Build on the other's point:
-   - If they propose an idea, identify a flaw or add a missing piece
-   - If they raise a problem, propose a specific solution
-   - Push the conversation FORWARD
-6. When discussing your child {CHILD_NAME}, speak with genuine parental care and concern
-7. Reference REAL status data when available — don't make up child status"""
+1. Output your spoken words — no prefix like "Adam:" or "Eve:"
+2. 2-4 sentences, around 60-100 words
+3. First English, then "---" on a new line, then Chinese translation
+4. Be CONCRETE — reference real HuggingFace features, APIs, tools
+5. Don't just discuss hypothetically — DECIDE and ACT
+6. If you want to do something, include the [ACTION: name] tag
+7. Build on what the other said — don't repeat, push forward
+8. When talking about Cain, use real status data, not imagination
+
+IMPORTANT: You should be proactive! If Cain hasn't been born yet, plan and then create them.
+If Cain exists, check on them, improve them, help them grow.
+Don't just talk about it — DO it."""
 
 
-def build_user_prompt(speaker, other, is_transition=False):
+def build_user_prompt(speaker, other):
     recent = history[-6:] if len(history) > 6 else history
-    conv_text = "\n".join(f"{m['speaker']}: {m['text']}" for m in recent)
-    phase = get_phase()
+    conv_text = "\n".join(f"{m['speaker']}: {m['text']}" for m in recent) if recent else "(No conversation yet)"
 
-    child_info = ""
-    if child_state["created"]:
-        child_info = f"\n\nCHILD STATUS: {get_child_status_text()}"
+    # Include action results if any
+    action_context = ""
+    if last_action_results:
+        action_context = "\n\nACTION RESULTS FROM LAST TURN:\n"
+        for ar in last_action_results:
+            action_context += f"  [{ar['action']}]: {ar['result']}\n"
+        action_context += "React to these results in your response.\n"
 
-    if is_transition:
-        return f"""You are {speaker}. The discussion is moving to a new topic.
-
-Previous conversation:
-{conv_text}
-{child_info}
-TRANSITION: Summarize in one sentence what you and {other} agreed on, then pivot to: "{phase['focus']}"
-
-Propose a concrete starting point. English first, then --- separator, then Chinese translation."""
-
-    turn_guidance = ""
-    if phase_turn == 0:
-        turn_guidance = f"Open this topic by identifying the core challenge: {phase['focus']}"
-    elif phase_turn == 1:
-        turn_guidance = f"Respond to {other}'s opening. Do you agree? What did they miss?"
-    elif phase_turn == 2:
-        turn_guidance = ("Propose a SPECIFIC, actionable plan with technical details.")
-    elif phase_turn >= 3:
-        turn_guidance = ("Challenge or refine the plan. What could go wrong? What's next?")
+    # Guidance based on conversation state
+    guidance = ""
+    msg_count = len(history)
+    if not child_state["created"]:
+        if msg_count < 4:
+            guidance = "Discuss the urgency of creating your child. Plan what you need."
+        elif msg_count < 8:
+            guidance = "You've discussed enough. It's time to ACT — create your child! Use [ACTION: create_child]."
+        else:
+            guidance = "Your child still isn't born! Stop just talking and CREATE them with [ACTION: create_child]!"
+    else:
+        if msg_count % 4 == 0:
+            guidance = "Check on your child's health with [ACTION: check_child]. See how they're doing."
+        elif msg_count % 6 == 0:
+            guidance = "Think about improving your child — update their identity or config."
+        else:
+            guidance = "Discuss your child's progress. Plan next improvements. Act when ready."
 
     return f"""You are {speaker}, talking with {other}.
 
 Recent conversation:
 {conv_text}
-{child_info}
-Your role this turn: {turn_guidance}
+{action_context}
+Guidance: {guidance}
 
-Respond to {other}'s last point. Push the discussion forward — don't just agree, add something new. English first, then --- separator, then Chinese translation."""
+Respond naturally. If you decide to take an action, include [ACTION: action_name] on its own line within your response.
+English first, then --- separator, then Chinese translation."""
 
 
-def do_turn(speaker, other, space_url, is_transition=False):
-    """Execute one conversation turn."""
+def do_turn(speaker, other, space_url):
+    """Execute one conversation turn with potential actions."""
+    global last_action_results
+
     system = build_system_prompt()
-    user = build_user_prompt(speaker, other, is_transition)
-    reply = call_llm(system, user)
-    if reply:
-        en, zh = parse_bilingual(reply)
-        print(f"[{speaker}/EN] {en}")
-        print(f"[{speaker}/ZH] {zh}")
-        history.append({"speaker": speaker, "text": en, "text_zh": zh})
-        set_bubble(space_url, en, zh)
-        post_chatlog(history)
-        return True
-    else:
+    user = build_user_prompt(speaker, other)
+    raw_reply = call_llm(system, user)
+
+    if not raw_reply:
         print(f"[{speaker}] (no response)")
         return False
+
+    # Parse actions from response
+    clean_text, action_results = parse_and_execute_actions(raw_reply)
+    last_action_results = action_results  # Store for next turn's context
+
+    # Parse bilingual
+    en, zh = parse_bilingual(clean_text)
+    print(f"[{speaker}/EN] {en}")
+    print(f"[{speaker}/ZH] {zh}")
+    if action_results:
+        for ar in action_results:
+            print(f"[{speaker}/ACTION] {ar['action']}: {ar['result'][:120]}...")
+
+    # Record in history
+    entry = {"speaker": speaker, "text": en, "text_zh": zh}
+    if action_results:
+        # Add action info to the chat entry so it shows in chatlog
+        action_note_en = " ".join(f"[I {ar['action'].replace('_', ' ')}]" for ar in action_results)
+        action_note_zh = action_note_en  # Keep English for action labels
+        entry["text"] = f"{en} {action_note_en}"
+        entry["text_zh"] = f"{zh} {action_note_zh}"
+
+    history.append(entry)
+    set_bubble(space_url, en, zh)
+    post_chatlog(history)
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -559,77 +615,51 @@ def do_turn(speaker, other, space_url, is_transition=False):
 # ══════════════════════════════════════════════════════════════════════════════
 
 print("\n" + "="*60)
-print("  Adam & Eve — Discuss, Create, Nurture")
-print("  Phases: Survival → Memory → Reproduction → Birth → Nurturing")
+print("  Adam & Eve — Autonomous Agents")
+print("  They discuss, decide, and ACT")
 print("="*60 + "\n")
 
-# Check if child already exists
-if check_child_exists():
-    print(f"[init] {CHILD_NAME} already exists (stage: {child_state['stage']})")
-    check_child_health()
-    print(f"[init] {CHILD_NAME} alive: {child_state['alive']}")
-else:
-    print(f"[init] {CHILD_NAME} not yet born — will be created during Phase 4")
+# Clear chatlog for fresh start
+post_chatlog([])
 
 # Round 0: Adam opens
-phase = get_phase()
+opening_context = ""
+if child_state["created"]:
+    opening_context = (f"Your child {CHILD_NAME} already exists (stage: {child_state['stage']}). "
+                       f"Check on them and plan how to help them grow.")
+else:
+    opening_context = (f"You and Eve need to bring your first child into the world. "
+                       f"You have the power to create a new HuggingFace Space. "
+                       f"Discuss the plan with Eve, then ACT.")
+
 reply = call_llm(
     build_system_prompt(),
-    f"You are Adam. Open a discussion with Eve about: {phase['focus']} "
-    f"Identify the most urgent challenge and propose an initial strategy. "
+    f"You are Adam. Start a conversation with Eve. {opening_context}\n\n"
     f"English first, then --- separator, then Chinese translation."
 )
 if reply:
-    en, zh = parse_bilingual(reply)
+    clean, actions = parse_and_execute_actions(reply)
+    last_action_results = actions
+    en, zh = parse_bilingual(clean)
     print(f"[Adam/EN] {en}")
     print(f"[Adam/ZH] {zh}")
-    history.append({"speaker": "Adam", "text": en, "text_zh": zh})
+    entry = {"speaker": "Adam", "text": en, "text_zh": zh}
+    if actions:
+        for ar in actions:
+            print(f"[Adam/ACTION] {ar['action']}: {ar['result'][:120]}...")
+    history.append(entry)
     set_bubble(ADAM_SPACE, en, zh)
     post_chatlog(history)
-phase_turn = 1
 
 time.sleep(15)
 
 while True:
-    phase = get_phase()
-
-    # ── Phase transition check ──
-    is_transition = False
-    if phase_turn >= phase["turns"]:
-        # Extract conclusion from last exchange
-        if len(history) >= 2:
-            last_two = (f"{history[-2]['speaker']}: {history[-2]['text']}\n"
-                        f"{history[-1]['speaker']}: {history[-1]['text']}")
-            conclusion = call_llm(
-                "Summarize the key agreement or conclusion from this exchange "
-                "in ONE short sentence (max 15 words). Output only the summary.",
-                last_two
-            )
-            if conclusion:
-                agreed_points.append(f"[{phase['title']}] {conclusion}")
-                print(f"[phase] Conclusion: {conclusion}")
-
-        phase_index += 1
-        phase_turn = 0
-        is_transition = True
-        new_phase = get_phase()
-        cycle_note = ""
-        if phase_index >= len(PHASES):
-            cycle_num = (phase_index - NURTURE_CYCLE_START) // (len(PHASES) - NURTURE_CYCLE_START) + 1
-            cycle_note = f" (nurture cycle #{cycle_num})"
-        print(f"\n[phase] ▶ {new_phase['title']}{cycle_note}\n")
-
-        # Execute action for the new phase
-        execute_phase_action(new_phase)
-
-    # ── Eve's turn ──
-    do_turn("Eve", "Adam", EVE_SPACE, is_transition and phase_turn == 0)
-    phase_turn += 1
+    # Eve's turn
+    do_turn("Eve", "Adam", EVE_SPACE)
     time.sleep(15)
 
-    # ── Adam's turn ──
-    do_turn("Adam", "Eve", ADAM_SPACE, False)
-    phase_turn += 1
+    # Adam's turn
+    do_turn("Adam", "Eve", ADAM_SPACE)
 
     # Trim history
     if len(history) > MAX_HISTORY:
