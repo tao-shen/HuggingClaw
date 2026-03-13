@@ -4460,10 +4460,15 @@ function toggleBrokerPanel() {
                             ? parseInt((agent.avatar.match(/_(\d+)$/) || [])[1] || '0', 10)
                             : 0;
                         if (!animIdx || animIdx < 1 || animIdx > 6) {
+                            // Fixed mapping for known agents to avoid hash collisions
+                            const KNOWN_AGENTS = { 'main': 2, 'adam': 1, 'eve': 3 };
                             const aid = String(agent.agentId || '');
-                            let hash = 0;
-                            for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
-                            animIdx = (hash % 6) + 1;
+                            animIdx = KNOWN_AGENTS[aid.toLowerCase()];
+                            if (!animIdx) {
+                                let hash = 0;
+                                for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
+                                animIdx = (hash % 6) + 1;
+                            }
                         }
                         const animKey = `guest_anim_${animIdx}`;
                         const animIdleKey = `guest_anim_${animIdx}_idle`;
