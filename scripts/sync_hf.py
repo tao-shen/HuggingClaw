@@ -783,6 +783,10 @@ def main():
                 """Launch conversation-loop with auto-restart on crash."""
                 nonlocal conv_loop_proc
                 time.sleep(60)  # let OpenClaw fully initialize
+                # Ensure requests is installed (may be missing from Docker image)
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                                "--break-system-packages", "requests"],
+                               capture_output=True, timeout=60)
                 script = os.path.join(os.path.dirname(__file__), "conversation-loop.py")
                 if not os.path.exists(script):
                     print(f"[SYNC] conversation-loop.py not found at {script}")
