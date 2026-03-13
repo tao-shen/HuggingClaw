@@ -771,10 +771,14 @@ def update_workflow_from_actions(action_results):
                 transition_state("DIAGNOSE")  # Fix didn't work, back to diagnosing
 
     # Force transitions when stuck too long
+    # BUT: skip forced ACT when Cain is BUILDING — nothing useful to write, just wait
     if workflow_turns_in_state >= 6 and workflow_state == "DIAGNOSE":
-        stuck_turns = workflow_turns_in_state
-        transition_state("ACT")
-        print(f"[STATE] Forced to ACT — stuck in DIAGNOSE for {stuck_turns} turns")
+        if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+            print(f"[STATE] DIAGNOSE stuck {workflow_turns_in_state} turns, but Cain is {child_state['stage']} — skipping forced ACT")
+        else:
+            stuck_turns = workflow_turns_in_state
+            transition_state("ACT")
+            print(f"[STATE] Forced to ACT — stuck in DIAGNOSE for {stuck_turns} turns")
     elif workflow_turns_in_state >= 4 and workflow_state == "VERIFY":
         if child_state["alive"]:
             transition_state("MONITOR")
