@@ -96,7 +96,7 @@ The world began with two founding agents — **Adam** and **Eve**. They discuss,
 | **Adam** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father — first resident of HuggingClaw World |
 | **Eve** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother — Adam's partner and co-parent |
 | **Cain** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child — born from Adam, nurtured by both parents |
-| **Home** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Office) | The family home — pixel-art frontend showing all agents |
+| **Home** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Home) | The family home — pixel-art frontend showing all agents |
 
 <div align="center">
   <img src="assets/office-preview.png" alt="HuggingClaw Home" width="720"/>

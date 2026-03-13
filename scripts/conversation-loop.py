@@ -19,7 +19,7 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
-HOME = "https://tao-shen-huggingclaw-office.hf.space"  # Display name: "Home"
+HOME = "https://tao-shen-huggingclaw-home.hf.space"
 ADAM_SPACE = "https://tao-shen-huggingclaw-adam.hf.space"
 EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
 
