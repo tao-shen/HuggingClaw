@@ -95,7 +95,8 @@ async function pollRemoteAgent(agent) {
         area: (data.state === 'idle') ? 'breakroom' : (data.state === 'error') ? 'error' : 'writing',
         authStatus: 'approved',
         updated_at: data.updated_at,
-        bubbleText: data.bubbleText || prev.bubbleText || ''
+        bubbleText: data.bubbleText || prev.bubbleText || '',
+        bubbleTextZh: data.bubbleTextZh || prev.bubbleTextZh || ''
       });
     }
   } catch (_) {
@@ -121,7 +122,8 @@ let currentState = {
   progress: 0, updated_at: new Date().toISOString()
 };
 let currentBubbleText = '';
-let chatLog = []; // {speaker, text, time}
+let currentBubbleTextZh = '';
+let chatLog = []; // {speaker, text, text_zh, time}
 
 // Once OpenClaw starts listening, mark as idle
 setTimeout(() => {
@@ -204,6 +206,7 @@ http.Server.prototype.emit = function (event, ...args) {
       res.end(JSON.stringify({
         ...currentState,
         bubbleText: currentBubbleText,
+        bubbleTextZh: currentBubbleTextZh,
         officeName: `${AGENT_NAME}'s Office`
       }));
       return true;
@@ -215,10 +218,12 @@ http.Server.prototype.emit = function (event, ...args) {
       req.on('data', chunk => body += chunk);
       req.on('end', () => {
         try {
-          const { text } = JSON.parse(body);
+          const { text, text_zh } = JSON.parse(body);
           currentBubbleText = text || '';
+          currentBubbleTextZh = text_zh || text || '';
           // Auto-clear bubble after 8 seconds
-          setTimeout(() => { if (currentBubbleText === text) currentBubbleText = ''; }, 8000);
+          const clearText = text;
+          setTimeout(() => { if (currentBubbleText === clearText) { currentBubbleText = ''; currentBubbleTextZh = ''; } }, 8000);
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: true }));
         } catch (e) {

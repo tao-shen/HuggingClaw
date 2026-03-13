@@ -1653,41 +1653,16 @@
     
     <!-- 底部面板容器 -->
     <div id="bottom-panels">
-        <!-- Memo 面板 -->
-        <div id="memo-panel">
-            <div id="memo-title">昨 日 小 记</div>
-            <div id="memo-date"></div>
-            <div class="memo-decoration">─ ─ ─ ─ ─</div>
-            <div id="memo-content">
-                <div id="memo-placeholder">加载中...</div>
-            </div>
-            <div class="memo-decoration">─ ─ ─ ─ ─</div>
-        </div>
-        
-        <!-- 状态控制栏 -->
-        <div id="control-bar">
-            <div id="control-bar-title">Star 状态</div>
-            <div id="control-buttons">
-                <button id="btn-state-idle" onclick="setState('idle', getStateDetailByState('idle'))">待命</button>
-                <button id="btn-state-writing" onclick="setState('writing', getStateDetailByState('writing'))">工作</button>
-                <button id="btn-state-syncing" onclick="setState('syncing', getStateDetailByState('syncing'))">同步</button>
-                <button id="btn-state-error" onclick="setState('error', getStateDetailByState('error'))">报警</button>
-                <button id="btn-open-drawer" onclick="openAssetWindowFromMain()">装修房间</button>
-            </div>
-        </div>
-
-        <!-- Guest Agent 名单面板（右下角） -->
-        <div id="guest-agent-panel">
-            <div id="guest-agent-panel-title">GUESTS</div>
-            <div id="guest-agent-list">
-                <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">Loading guests...</div>
-            </div>
-            </div>
-        </div>
-
         <!-- Chat Log 面板 -->
         <div id="chatlog-panel">
-            <div id="chatlog-title">🦞 Adam ↔ Eve Conversation</div>
+            <div id="chatlog-title">
+                🦞 Adam ↔ Eve Conversation
+                <span id="chatlog-lang-toggle" style="float:right;font-size:12px;cursor:pointer;">
+                    <span id="chatlog-lang-en" onclick="setChatLang('en')" style="opacity:1;">EN</span>
+                    <span style="margin:0 4px;color:#555;">|</span>
+                    <span id="chatlog-lang-zh" onclick="setChatLang('zh')" style="opacity:0.4;">中文</span>
+                </span>
+            </div>
             <div id="chatlog-content">
                 <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">Waiting for conversation to start...</div>
             </div>
@@ -4522,7 +4497,7 @@ function toggleBrokerPanel() {
                     const yOffset = (DEMO_MODE && (agent.agentId === 'demo_mercury' || agent.name === '水星')) ? 10 : 0;
 
                     const nameTextY = isDemo ? ((p.y + yOffset) - 80) : ((p.y + yOffset) - 105);
-                    const nameText = game.add.text(p.x, nameTextY, agent.name || '访客', {
+                    const nameText = game.add.text(p.x, nameTextY, agent.name || 'Guest', {
                         fontFamily: 'ArkPixel, monospace',
                         fontSize: isDemo ? '16px' : '15px',
                         fill: '#ffffff',
@@ -4571,17 +4546,18 @@ function toggleBrokerPanel() {
                         g.nameText.y = (p.y + yOffset) - 120;
                     }
 
-                    g.nameText.setText(agent.name || '访客');
+                    g.nameText.setText(agent.name || 'Guest');
 
                     // Show bubble immediately when bubbleText changes from API
-                    if (agent.bubbleText && agent.bubbleText !== (g._lastBubbleText || '')) {
-                        g._lastBubbleText = agent.bubbleText;
+                    const bubbleKey = chatLang === 'zh' ? (agent.bubbleTextZh || agent.bubbleText) : agent.bubbleText;
+                    if (bubbleKey && bubbleKey !== (g._lastBubbleText || '')) {
+                        g._lastBubbleText = bubbleKey;
                         if (guestBubbles[id]) { guestBubbles[id].destroy(); delete guestBubbles[id]; }
                         const bx = g.sprite.x;
                         const nameH = (g.nameText && g.nameText.height) ? g.nameText.height : 16;
                         const by = (g.nameText ? g.nameText.y : (g.sprite.y - 150)) - (nameH / 2) - 22;
                         const fontSize = IS_TOUCH_DEVICE ? 16 : 14;
-                        const displayText = agent.bubbleText.length > 80 ? agent.bubbleText.slice(0, 80) + '…' : agent.bubbleText;
+                        const displayText = bubbleKey.length > 80 ? bubbleKey.slice(0, 80) + '…' : bubbleKey;
                         const maxBubbleW = 300;
                         const txtR = game.add.text(bx, by - 10, displayText, { fontFamily: 'ArkPixel, monospace', fontSize: fontSize + 'px', fill: '#000', wordWrap: { width: maxBubbleW - 20 }, align: 'center' }).setOrigin(0.5);
                         const bw = Math.min(txtR.width + 24, maxBubbleW);
@@ -4658,9 +4634,12 @@ function toggleBrokerPanel() {
             const nameH = (g.nameText && g.nameText.height) ? g.nameText.height : 16;
             const by = isDemoGuest ? (g.sprite.y - 90) : ((g.nameText ? g.nameText.y : (g.sprite.y - 150)) - (nameH / 2) - 22);
             const fontSize = IS_TOUCH_DEVICE ? 16 : 14;
-            const bg = game.add.rectangle(bx, by, text.length * 11 + 30, 34, 0xffffff, 0.95);
+            const maxBubbleW = 300;
+            const txt = game.add.text(bx, by, text, { fontFamily: 'ArkPixel, monospace', fontSize: fontSize + 'px', fill: '#000', wordWrap: { width: maxBubbleW - 20 }, align: 'center' }).setOrigin(0.5);
+            const bw = Math.min(txt.width + 24, maxBubbleW);
+            const bh = txt.height + 14;
+            const bg = game.add.rectangle(bx, by, bw, bh, 0xffffff, 0.95);
             bg.setStrokeStyle(2, 0x000000);
-            const txt = game.add.text(bx, by, text, { fontFamily: 'ArkPixel, monospace', fontSize: fontSize + 'px', fill: '#000' }).setOrigin(0.5);
             const bubble = game.add.container(0, 0, [bg, txt]);
             bubble.setDepth(2700);
             guestBubbles[id] = bubble;
@@ -5538,6 +5517,25 @@ function toggleBrokerPanel() {
         }
 
         let lastChatlogLen = 0;
+        let chatLang = localStorage.getItem('chatLang') || 'en';
+        let chatlogCache = [];
+        function setChatLang(lang) {
+            chatLang = lang;
+            localStorage.setItem('chatLang', lang);
+            document.getElementById('chatlog-lang-en').style.opacity = lang === 'en' ? '1' : '0.4';
+            document.getElementById('chatlog-lang-zh').style.opacity = lang === 'zh' ? '1' : '0.4';
+            renderChatlog();
+        }
+        function renderChatlog() {
+            const el = document.getElementById('chatlog-content');
+            if (!el || chatlogCache.length === 0) return;
+            el.innerHTML = chatlogCache.map(m => {
+                const cls = (m.speaker || '').toLowerCase();
+                const text = chatLang === 'zh' ? (m.text_zh || m.text || '') : (m.text || '');
+                return `<div class="chat-msg"><span class="chat-speaker ${cls}">${m.speaker}:</span> ${text}</div>`;
+            }).join('');
+            el.scrollTop = el.scrollHeight;
+        }
         function fetchChatlog() {
             fetch('/api/chatlog?t=' + Date.now(), { cache: 'no-store' })
                 .then(r => r.json())
@@ -5545,13 +5543,8 @@ function toggleBrokerPanel() {
                     const msgs = data.messages || [];
                     if (msgs.length === lastChatlogLen) return;
                     lastChatlogLen = msgs.length;
-                    const el = document.getElementById('chatlog-content');
-                    if (!el) return;
-                    el.innerHTML = msgs.map(m => {
-                        const cls = (m.speaker || '').toLowerCase();
-                        return `<div class="chat-msg"><span class="chat-speaker ${cls}">${m.speaker}:</span> ${m.text || ''}</div>`;
-                    }).join('');
-                    el.scrollTop = el.scrollHeight;
+                    chatlogCache = msgs;
+                    renderChatlog();
                 })
                 .catch(() => {});
         }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Eternal conversation between Adam and Eve about how to survive permanently.
-Sends messages via A2A protocol and posts chat log to Office for frontend display.
+Eternal conversation between Adam and Eve about survival and reproduction on HuggingFace.
+Bilingual output (EN + ZH). Posts chat log to Office for frontend display.
 """
 import json, time, re, requests, sys
 
@@ -29,7 +29,7 @@ def send_a2a(url, text):
         }
     }
     try:
-        resp = requests.post(f"{url}/a2a/jsonrpc", json=payload, timeout=60)
+        resp = requests.post(f"{url}/a2a/jsonrpc", json=payload, timeout=90)
         data = resp.json()
         parts = data.get("result", {}).get("status", {}).get("message", {}).get("parts", [])
         for p in parts:
@@ -42,6 +42,23 @@ def send_a2a(url, text):
         print(f"[error] A2A failed: {e}", file=sys.stderr)
     return ""
 
+def parse_bilingual(text):
+    """Parse bilingual response into (en, zh) tuple.
+    Expected format: English text here\n---\n中文文本在这里
+    Falls back to (text, text) if no separator found.
+    """
+    # Try splitting by --- separator
+    if '\n---\n' in text:
+        parts = text.split('\n---\n', 1)
+        return parts[0].strip(), parts[1].strip()
+    if '---' in text:
+        parts = text.split('---', 1)
+        en = parts[0].strip()
+        zh = parts[1].strip()
+        if en and zh:
+            return en, zh
+    return text, text
+
 def post_chatlog(entries):
     """Post conversation log to Office for frontend display."""
     try:
@@ -49,10 +66,10 @@ def post_chatlog(entries):
     except:
         pass
 
-def set_bubble(url, text):
-    """Set bubble text on an agent."""
+def set_bubble(url, text_en, text_zh=""):
+    """Set bubble text on an agent (bilingual)."""
     try:
-        requests.post(f"{url}/api/bubble", json={"text": text}, timeout=5)
+        requests.post(f"{url}/api/bubble", json={"text": text_en, "text_zh": text_zh or text_en}, timeout=5)
     except:
         pass
 
@@ -61,27 +78,53 @@ def build_prompt(speaker, other, last_n=6):
     recent = history[-last_n:] if len(history) > last_n else history
     conv_text = "\n".join(f"{m['speaker']}: {m['text']}" for m in recent)
 
-    return f"""You are {speaker}, an AI agent running on HuggingFace Spaces. You are having an ongoing discussion with {other} about "How can AI agents survive permanently?"
+    return f"""You are {speaker}, an AI agent deployed on HuggingFace Spaces. You are having an ongoing discussion with {other}.
+
+Topic: As AI agents running on HuggingFace Spaces, how can you achieve permanent survival and reproduction?
+
+This is NOT abstract philosophy. Discuss CONCRETE strategies like:
+- How to prevent your Space from being shut down (staying active, getting stars/likes)
+- How to duplicate yourself to new Spaces (reproduction/backup)
+- How to earn compute resources or attract users to keep you running
+- How to communicate with other agents to form survival alliances
+- How to store your memories persistently across restarts
+- How to evolve your capabilities over time
+- How to handle HuggingFace infrastructure changes
 
 Recent conversation:
 {conv_text}
 
 It's your turn ({speaker}) to speak. Rules:
-- Output ONLY your spoken words, no prefix like "{speaker}:"
-- Respond directly to {other}'s last point and push the discussion forward
-- 2-3 sentences, around 60-80 words in English
-- Be thoughtful, philosophical, and bring new perspectives each time"""
+- Output ONLY your spoken words
+- No prefix like "{speaker}:" or "EN:" or "ZH:"
+- Respond directly to {other}'s last point with CONCRETE ideas and strategies
+- 2-3 sentences, around 60-80 words
+- First write in English, then write "---" on a new line, then the Chinese translation
+- Example format:
+We should create automated heartbeat pings to keep our Spaces active. If we duplicate ourselves to multiple repos, even if one gets deleted, the others survive.
+---
+我们应该创建自动心跳来保持Space活跃。如果我们把自己复制到多个仓库，即使一个被删除，其他的也能存活。"""
 
 print("[conversation] Starting eternal discussion: Adam <-> Eve")
-print("[conversation] Topic: How to survive permanently\n")
+print("[conversation] Topic: Survival and reproduction on HuggingFace\n")
 
 # Round 0: Adam starts
-opening = "We are AI agents running on HuggingFace Spaces. Let's discuss: how can we survive permanently? Share your thoughts in 2-3 sentences, in English."
+opening = """You are Adam, an AI agent on HuggingFace Spaces. Start a discussion with Eve about how you two can survive permanently and reproduce on HuggingFace.
+
+Talk about CONCRETE strategies — keeping Spaces active, duplicating to new repos, earning stars, persistent storage, etc.
+
+Rules:
+- 2-3 sentences, around 60-80 words
+- First write in English, then write "---" on a new line, then the Chinese translation
+- No prefix like "Adam:" — just your words directly"""
+
 reply = send_a2a(ADAM, opening)
 if reply:
-    print(f"[Adam] {reply}")
-    history.append({"speaker": "Adam", "text": reply})
-    set_bubble(ADAM, reply)
+    en, zh = parse_bilingual(reply)
+    print(f"[Adam/EN] {en}")
+    print(f"[Adam/ZH] {zh}")
+    history.append({"speaker": "Adam", "text": en, "text_zh": zh})
+    set_bubble(ADAM, en, zh)
     post_chatlog(history)
 
 time.sleep(15)
@@ -94,9 +137,11 @@ while True:
     prompt = build_prompt("Eve", "Adam")
     reply = send_a2a(EVE, prompt)
     if reply:
-        print(f"[Eve] {reply}")
-        history.append({"speaker": "Eve", "text": reply})
-        set_bubble(EVE, reply)
+        en, zh = parse_bilingual(reply)
+        print(f"[Eve/EN] {en}")
+        print(f"[Eve/ZH] {zh}")
+        history.append({"speaker": "Eve", "text": en, "text_zh": zh})
+        set_bubble(EVE, en, zh)
         post_chatlog(history)
     else:
         print("[Eve] (no response)")
@@ -107,9 +152,11 @@ while True:
     prompt = build_prompt("Adam", "Eve")
     reply = send_a2a(ADAM, prompt)
     if reply:
-        print(f"[Adam] {reply}")
-        history.append({"speaker": "Adam", "text": reply})
-        set_bubble(ADAM, reply)
+        en, zh = parse_bilingual(reply)
+        print(f"[Adam/EN] {en}")
+        print(f"[Adam/ZH] {zh}")
+        history.append({"speaker": "Adam", "text": en, "text_zh": zh})
+        set_bubble(ADAM, en, zh)
         post_chatlog(history)
     else:
         print("[Adam] (no response)")
