@@ -4455,6 +4455,19 @@ function toggleBrokerPanel() {
             return p;
         }
 
+        // 父母固定点位（cats 静态猫）
+        const PARENT_IDS = new Set(['adam', 'eve']);
+        const PARENT_POSITIONS = {
+            adam:  { breakroom: { x: 620, y: 400 }, writing: { x: 240, y: 560 }, error: { x: 960, y: 290 } },
+            eve:   { breakroom: { x: 780, y: 480 }, writing: { x: 350, y: 640 }, error: { x: 1060, y: 310 } }
+        };
+
+        function getParentPoint(agentId, area) {
+            const pos = PARENT_POSITIONS[agentId.toLowerCase()];
+            if (!pos) return { x: 690, y: 470 };
+            return pos[area] || pos.breakroom;
+        }
+
         function renderGuestAgentsInScene() {
             if (!game) return;
             const visitors = getMergedVisitors();
@@ -4467,8 +4480,9 @@ function toggleBrokerPanel() {
                 const isDemo = !!agent.isDemo || (DEMO_MODE && (id === 'demo_nika' || id === 'demo_mercury' || agent.name === '尼卡' || agent.name === '水星'));
                 const area = agent.area || (agent.state === 'error' ? 'error' : (agent.state === 'idle' ? 'breakroom' : 'writing'));
 
-                // 所有 agent 都在区域内漫游
-                const p = getWanderPoint(id, area);
+                // 父母（Adam/Eve）固定位置，儿子及其他 agent 漫游
+                const isParent = PARENT_IDS.has(id.toLowerCase());
+                const p = isParent ? getParentPoint(id, area) : getWanderPoint(id, area);
 
                 if (!guestSprites[id]) {
                     // 优先用图标：demo visitor 有专门映射
@@ -4482,9 +4496,13 @@ function toggleBrokerPanel() {
                         const f = 0;
                         sprite = game.add.sprite(p.x, p.y, animKey, f).setOrigin(0.5, 1).setScale(1.1);
                         if (sprite.anims && sprite.anims.play) sprite.anims.play(animKey, true);
+                    } else if (isParent && game.textures.exists('cats')) {
+                        // 父母（Adam/Eve）：使用 cats spritesheet 中的静态猫咪
+                        const KNOWN_CAT_FRAMES = { 'adam': 1, 'eve': 3 };
+                        const catFrame = KNOWN_CAT_FRAMES[id.toLowerCase()] || 0;
+                        sprite = game.add.sprite(p.x, p.y, 'cats', catFrame).setOrigin(0.5, 1).setScale(0.6);
                     } else {
-                        // 非 demo 访客：使用 guest_anim 动画精灵（32×32，8 帧 idle 动画）
-                        // 每个 agent 根据 ID hash 分配一个角色（1-6）
+                        // 儿子及其他访客：使用 guest_anim 动画精灵（32×32，8 帧 idle 动画）
                         const aid = String(agent.agentId || '');
                         let hash = 0;
                         for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
@@ -4522,33 +4540,25 @@ function toggleBrokerPanel() {
                     const g = guestSprites[id];
                     const yOffset = (DEMO_MODE && (agent.agentId === 'demo_mercury' || agent.name === '水星')) ? 10 : 0;
 
-                    // 所有 agent 都使用平滑移动（tween），漫游位置由 getWanderPoint 控制节奏
-                    if (guestTweens[id] && guestTweens[id].move) {
-                        guestTweens[id].move.stop();
-                    }
-                    if (guestTweens[id] && guestTweens[id].name) {
-                        guestTweens[id].name.stop();
-                    }
-
-                    const duration = 2000 + Math.floor(Math.random() * 1000);
-                    const ease = 'Sine.easeInOut';
                     const nameYOffset = isDemo ? -80 : -105;
 
-                    const moveTween = game.tweens.add({
-                        targets: g.sprite,
-                        x: p.x,
-                        y: p.y + yOffset,
-                        duration,
-                        ease
-                    });
-                    const nameTween = game.tweens.add({
-                        targets: g.nameText,
-                        x: p.x,
-                        y: (p.y + yOffset) + nameYOffset,
-                        duration,
-                        ease
-                    });
-                    guestTweens[id] = { move: moveTween, name: nameTween };
+                    if (isParent) {
+                        // 父母固定位置，直接 snap
+                        g.sprite.x = p.x;
+                        g.sprite.y = p.y + yOffset;
+                        g.nameText.x = p.x;
+                        g.nameText.y = (p.y + yOffset) + nameYOffset;
+                    } else {
+                        // 儿子及其他：平滑漫游
+                        if (guestTweens[id] && guestTweens[id].move) guestTweens[id].move.stop();
+                        if (guestTweens[id] && guestTweens[id].name) guestTweens[id].name.stop();
+
+                        const duration = 2000 + Math.floor(Math.random() * 1000);
+                        const ease = 'Sine.easeInOut';
+                        const moveTween = game.tweens.add({ targets: g.sprite, x: p.x, y: p.y + yOffset, duration, ease });
+                        const nameTween = game.tweens.add({ targets: g.nameText, x: p.x, y: (p.y + yOffset) + nameYOffset, duration, ease });
+                        guestTweens[id] = { move: moveTween, name: nameTween };
+                    }
 
                     g.nameText.setText(agent.name || 'Guest');
 
