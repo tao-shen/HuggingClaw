@@ -1117,6 +1117,8 @@ Priority: SURVIVAL first, then CAPABILITY. A dead child can't learn.
 - If {CHILD_NAME} is stuck in APP_STARTING, the #1 cause is: no process listening on port 7860. Check the code for a .launch() call.
 - A minimal alive app: `import gradio as gr; gr.Interface(fn=lambda x:x, inputs="text", outputs="text").launch(server_name="0.0.0.0", server_port=7860)`
 - OOM (Exit code 137) means reduce model/dependency size, NOT remove gradio. Gradio itself is lightweight (~50MB).
+- ⚠️ HF Spaces Docker SDK may OVERRIDE the base image Python version. Changing `FROM python:3.X` in Dockerfile does NOT guarantee that Python version runs. If a dependency fails due to Python version incompatibility (e.g. pydub needing pyaudioop removed in 3.13), the CORRECT fix is to REMOVE or REPLACE that dependency — NOT keep rewriting the Dockerfile.
+- If you've tried the same fix 3+ times and the error persists, CHANGE STRATEGY. Try removing the problematic dependency, using an alternative library, or wrapping the import in try/except.
 
 MULTI-ACTION STRATEGY:
 You can use UP TO 5 actions per turn. Use this to work efficiently:
