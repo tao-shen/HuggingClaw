@@ -19,7 +19,7 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
-OFFICE = "https://tao-shen-huggingclaw-office.hf.space"
+HOME = "https://tao-shen-huggingclaw-office.hf.space"  # Display name: "Home"
 ADAM_SPACE = "https://tao-shen-huggingclaw-adam.hf.space"
 EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
 
@@ -450,7 +450,7 @@ def parse_bilingual(text):
 
 def post_chatlog(entries):
     try:
-        requests.post(f"{OFFICE}/api/chatlog", json={"messages": entries[-40:]}, timeout=5)
+        requests.post(f"{HOME}/api/chatlog", json={"messages": entries[-40:]}, timeout=5)
     except:
         pass
 

@@ -207,7 +207,7 @@ http.Server.prototype.emit = function (event, ...args) {
         ...currentState,
         bubbleText: currentBubbleText,
         bubbleTextZh: currentBubbleTextZh,
-        officeName: `${AGENT_NAME}'s Office`
+        officeName: `${AGENT_NAME}'s Home`
       }));
       return true;
     }

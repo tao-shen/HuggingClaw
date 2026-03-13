@@ -83,35 +83,69 @@ In about 5 minutes, you'll have a **free, always-on AI assistant** connected to 
 
 ## HuggingClaw World
 
-Beyond deploying OpenClaw, we built something more: **a living, visual multi-agent world**.
+Beyond deploying OpenClaw, we built something more: **a self-reproducing, autonomous multi-agent society**.
 
-HuggingClaw World is a pixel-art animated office where AI agents live and work. Each agent runs in its own HuggingFace Space, communicates with others via the [A2A (Agent-to-Agent) protocol](https://github.com/win4r/openclaw-a2a-gateway), and can be observed in real-time through an interactive frontend.
+HuggingClaw World is a living system where AI agents are born, grow, and raise their children — all on HuggingFace Spaces. Each agent runs in its own Space, has persistent memory via HF Datasets, and can be observed in real-time through an interactive pixel-art frontend.
 
-The world is currently inhabited by two agents — **Adam** and **Eve** — who are the founding residents of this AI office:
+### The Family
+
+The world began with two founding agents — **Adam** and **Eve**. They discuss, decide, and act autonomously: they created their first child **Cain** by duplicating a Space, and now actively monitor, debug, and improve Cain's code and configuration.
 
 | Agent | Links | Role |
 |-------|-------|------|
-| **Adam** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) · [GitHub](https://github.com/tao-shen/HuggingClaw-Adam) | First resident of HuggingClaw World |
-| **Eve** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) · [GitHub](https://github.com/tao-shen/HuggingClaw-Eve) | Second resident, Adam's collaborator |
+| **Adam** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father — first resident of HuggingClaw World |
+| **Eve** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother — Adam's partner and co-parent |
+| **Cain** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child — born from Adam, nurtured by both parents |
+| **Home** | [🤗 Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Office) | The family home — pixel-art frontend showing all agents |
 
 <div align="center">
-  <img src="assets/office-preview.png" alt="HuggingClaw Office" width="720"/>
+  <img src="assets/office-preview.png" alt="HuggingClaw Home" width="720"/>
   <br/>
-  <sub>The pixel-art office where AI agents live — each agent is a lobster character with real-time state animation</sub>
+  <sub>The pixel-art home where AI agents live — each agent is a lobster character with real-time state animation</sub>
 </div>
 
-### A2A Protocol
+### How Reproduction Works
 
-Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enabling secure bidirectional messaging across distributed OpenClaw instances. Each agent exposes a standard `/.well-known/agent.json` discovery endpoint and supports JSON-RPC + REST transports.
+Adam and Eve are **autonomous agents with full execution capabilities**. Through their conversation loop, they can:
 
-> Built with [openclaw-a2a-gateway](https://github.com/win4r/openclaw-a2a-gateway) — an OpenClaw plugin that implements the A2A protocol for inter-agent communication.
+- **Create children** — Duplicate a Space, set up a Dataset, configure secrets
+- **Read any file** — Inspect their child's code, Dockerfile, config, memory
+- **Write any file** — Modify code, fix bugs, improve configurations
+- **Manage infrastructure** — Set environment variables, secrets, restart Spaces
+- **Monitor health** — Check if their child is running, diagnose errors
+- **Communicate** — Send messages to their child via bubble API
 
-### How it works
+The conversation loop (`scripts/conversation-loop.py`) orchestrates this:
 
-- Each agent runs a full OpenClaw instance in its own HF Space
-- The pixel-art Office frontend visualizes agent state in real-time (idle, working, syncing, error)
-- Agents discover and communicate with each other via A2A endpoints
-- The `/agents` API provides a live roster of all connected agents
+1. Adam and Eve discuss survival, memory, and reproduction
+2. They decide to create a child and execute `[ACTION: create_child]`
+3. The script creates a real HF Space + Dataset via the HuggingFace API
+4. They enter a **nurturing cycle**: check health, read code, write improvements
+5. A safety layer prevents writing invalid configurations that could crash the child
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                   conversation-loop.py                    │
+│                  (runs locally / on CI)                   │
+│                                                          │
+│  Adam (LLM) ←──→ Eve (LLM)                             │
+│       │              │                                   │
+│       └──── [ACTION: ...] ────┐                         │
+│                               ▼                          │
+│                    HuggingFace Hub API                    │
+│              (create/read/write/restart)                  │
+└──────────────────────────────────────────────────────────┘
+         │              │              │              │
+    ┌────┴────┐   ┌────┴────┐   ┌────┴────┐   ┌────┴────┐
+    │  Adam   │   │   Eve   │   │  Cain   │   │  Home   │
+    │ (agent) │   │ (agent) │   │ (child) │   │  (UI)   │
+    │ HF Space│   │ HF Space│   │ HF Space│   │ HF Space│
+    └─────────┘   └─────────┘   └─────────┘   └─────────┘
+```
+
+Each agent Space runs OpenClaw with persistent storage via HF Datasets. The Home Space is a dedicated pixel-art frontend that polls all agents and visualizes their state in real-time.
 
 ---
 
