@@ -429,6 +429,8 @@ def action_claude_code(task):
 cc_live_lines = deque(maxlen=30)    # rolling window of CC output lines
 cc_status = {"running": False, "task": "", "result": "", "assigned_by": "", "started": 0.0}
 cc_lock = threading.Lock()
+_last_cc_snapshot = ""              # tracks whether CC output changed between turns
+_cc_stale_count = 0                 # how many turns CC output hasn't changed
 
 
 def cc_submit_task(task, assigned_by, ctx):
@@ -460,14 +462,23 @@ def cc_submit_task(task, assigned_by, ctx):
 
 def cc_get_live_status():
     """Get CC's current status and recent output for agents to discuss."""
+    global _last_cc_snapshot, _cc_stale_count
     with cc_lock:
         if cc_status["running"]:
             elapsed = int(time.time() - cc_status["started"])
             lines = list(cc_live_lines)
             recent = "\n".join(lines[-10:]) if lines else "(no output yet)"
+            # Track whether output changed
+            snapshot = recent
+            if snapshot == _last_cc_snapshot:
+                _cc_stale_count += 1
+            else:
+                _cc_stale_count = 0
+                _last_cc_snapshot = snapshot
+            stale_note = f"\n(No new output for {_cc_stale_count} turns — discuss other topics while waiting)" if _cc_stale_count >= 2 else ""
             return (f"🔨 Claude Code is WORKING (assigned by {cc_status['assigned_by']}, {elapsed}s ago)\n"
                     f"Task: {cc_status['task']}\n"
-                    f"Recent output:\n{recent}")
+                    f"Recent output:\n{recent}{stale_note}")
         elif cc_status["result"]:
             return (f"✅ Claude Code FINISHED (assigned by {cc_status['assigned_by']})\n"
                     f"Result:\n{cc_status['result'][:1500]}")
@@ -869,7 +880,10 @@ def build_user_prompt(speaker, other, ctx):
 
     # Guidance based on CC status + child state
     cc_busy = cc_status["running"]
-    if cc_busy:
+    if cc_busy and _cc_stale_count >= 2:
+        parts.append(f"\n🔨 Claude Code is WORKING but no new output yet. Do NOT repeat what you already said about CC's output.")
+        parts.append(f"Instead, discuss with your partner: plans for {CHILD_NAME}'s future, features to add, architecture ideas, or lessons learned.")
+    elif cc_busy:
         parts.append(f"\n🔨 Claude Code is WORKING. Discuss its progress with your partner. No [TASK] needed now.")
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
         parts.append(f"\n⏳ {CHILD_NAME} is {child_state['stage']}. Discuss what to check next. Assign a review [TASK] if CC is idle.")
@@ -1014,10 +1028,15 @@ while True:
         print(f"[STATUS] Error: {e}")
 
     do_turn("Eve", "Adam", EVE_SPACE)
-    time.sleep(TURN_INTERVAL)
+
+    # Adaptive interval: slow down when CC output hasn't changed
+    wait = TURN_INTERVAL + min(_cc_stale_count * 15, 90)  # 15s → 30s → 45s → ... → max 105s
+    if wait > TURN_INTERVAL:
+        print(f"[PACE] CC output stale ({_cc_stale_count} turns), next turn in {wait}s")
+    time.sleep(wait)
 
     do_turn("Adam", "Eve", ADAM_SPACE)
-    time.sleep(TURN_INTERVAL)
+    time.sleep(wait)
 
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
