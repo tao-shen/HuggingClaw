@@ -130,8 +130,28 @@ child_state = {
 }
 
 # Rebuild cooldown — prevent rapid write_file to Space that keeps resetting builds
-REBUILD_COOLDOWN_SECS = 600  # 10 minutes
+REBUILD_COOLDOWN_SECS = 360  # 6 minutes (builds typically finish in 3-5 min)
 last_rebuild_trigger_at = 0  # timestamp of last write_file to space
+files_written_this_cycle = set()  # track files written since last RUNNING state
+
+def check_and_clear_cooldown():
+    """Auto-clear cooldown if Cain has finished building (dynamic cooldown)."""
+    global last_rebuild_trigger_at
+    if last_rebuild_trigger_at == 0:
+        return
+    elapsed = time.time() - last_rebuild_trigger_at
+    if elapsed < 60:  # always wait at least 60s
+        return
+    try:
+        info = hf_api.space_info(CHILD_SPACE_ID)
+        stage = info.runtime.stage if info.runtime else "unknown"
+        if stage in ("RUNNING", "RUNTIME_ERROR", "BUILD_ERROR"):
+            print(f"[COOLDOWN] Build finished (stage={stage}), clearing cooldown early ({int(elapsed)}s elapsed)")
+            last_rebuild_trigger_at = 0
+            child_state["stage"] = stage
+            child_state["alive"] = (stage == "RUNNING")
+    except:
+        pass
 
 
 def init_child_state():
@@ -217,6 +237,7 @@ def action_check_health():
             child_state["state"] = data.get("state", "unknown")
             child_state["detail"] = data.get("detail", "")
             child_state["stage"] = "RUNNING"
+            files_written_this_cycle.clear()  # reset write dedup on successful run
             return (f"{CHILD_NAME} is ALIVE! State: {child_state['state']}, "
                     f"Detail: {child_state['detail'] or 'healthy'}")
     except:
@@ -287,7 +308,7 @@ def action_restart():
         child_state["alive"] = False
         child_state["stage"] = "RESTARTING"
         last_rebuild_trigger_at = time.time()
-        return f"{CHILD_NAME} is restarting. Will take a few minutes. 10-min cooldown starts now."
+        return f"{CHILD_NAME} is restarting. Will take a few minutes. Cooldown starts now (clears automatically when build finishes)."
     except Exception as e:
         return f"Restart failed: {e}"
 
@@ -354,7 +375,7 @@ def action_write_file(target, path, content):
         rebuild_note = ""
         if target == "space":
             last_rebuild_trigger_at = time.time()
-            rebuild_note = " ⚠️ This triggers a Space rebuild! 10-min cooldown starts now."
+            rebuild_note = " ⚠️ This triggers a Space rebuild! Cooldown starts now (auto-clears when build finishes)."
         return f"✓ Wrote {len(content)} bytes to {CHILD_NAME}'s {target}:{path}{rebuild_note}"
     except Exception as e:
         return f"Error writing {target}:{path}: {e}"
@@ -440,18 +461,27 @@ def parse_and_execute_actions(raw_text):
     if write_match:
         target, path, content = write_match.group(1), write_match.group(2).strip(), write_match.group(3).strip()
         key = f"write_file:{target}:{path}"
+        file_id = f"{target}:{path}"
         if key not in executed:
             executed.add(key)
+            # Guard: duplicate write to same file this cycle
+            if target == "space" and file_id in files_written_this_cycle:
+                result = (f"⛔ BLOCKED: {path} was already written this cycle. "
+                          "Wait for the build to finish and verify before writing again. "
+                          "Writing the same file twice wastes a rebuild cycle.")
+                results.append({"action": key, "result": result})
+                print(f"[BLOCKED] {key} — duplicate write this cycle")
             # Guard: block write_file during BUILDING/APP_STARTING/RESTARTING
-            if target == "space" and child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+            elif target == "space" and child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
                 result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. "
                           "Writing to Space during build RESETS the entire build from scratch. "
                           "Wait for it to finish, then try again.")
                 results.append({"action": key, "result": result})
                 print(f"[BLOCKED] {key} — Cain is {child_state['stage']}")
-            # Guard: rebuild cooldown
+            # Guard: rebuild cooldown (check dynamically first)
             elif target == "space" and last_rebuild_trigger_at > 0:
-                elapsed = time.time() - last_rebuild_trigger_at
+                check_and_clear_cooldown()  # may clear cooldown early if build done
+                elapsed = time.time() - last_rebuild_trigger_at if last_rebuild_trigger_at > 0 else 9999
                 if elapsed < REBUILD_COOLDOWN_SECS:
                     remaining = int(REBUILD_COOLDOWN_SECS - elapsed)
                     result = (f"⛔ BLOCKED: Rebuild cooldown active ({remaining}s remaining). "
@@ -462,10 +492,16 @@ def parse_and_execute_actions(raw_text):
                     result = action_write_file(target, path, content)
                     results.append({"action": key, "result": result})
                     print(f"[ACTION] {key} → {result[:100]}")
+                    files_written_this_cycle.add(file_id)
+                    # Clear knowledge cache so agents can re-read the file they just wrote
+                    knowledge["files_read"].discard(file_id)
             else:
                 result = action_write_file(target, path, content)
                 results.append({"action": key, "result": result})
                 print(f"[ACTION] {key} → {result[:100]}")
+                if target == "space":
+                    files_written_this_cycle.add(file_id)
+                    knowledge["files_read"].discard(file_id)
 
     # 2. Handle all [ACTION/Action/操作/动作: ...] tags — case-insensitive, multilingual
     for match in re.finditer(r'\[(?:ACTION|Action|action|操作|动作)\s*[:：]\s*([^\]]+)\]', raw_text):
@@ -501,7 +537,8 @@ def parse_and_execute_actions(raw_text):
 
         # Rebuild cooldown — prevent writing to Space repo too soon after last rebuild trigger
         if name in ("write_file", "set_env", "set_secret", "restart") and last_rebuild_trigger_at > 0:
-            elapsed = time.time() - last_rebuild_trigger_at
+            check_and_clear_cooldown()  # may clear cooldown early if build done
+            elapsed = time.time() - last_rebuild_trigger_at if last_rebuild_trigger_at > 0 else 9999
             if elapsed < REBUILD_COOLDOWN_SECS:
                 remaining = int(REBUILD_COOLDOWN_SECS - elapsed)
                 result = (f"⛔ BLOCKED: Rebuild cooldown active — last Space change was {int(elapsed)}s ago. "
@@ -1114,8 +1151,34 @@ if reply:
 time.sleep(15)
 
 while True:
+    # Smart wait: if Cain is BUILDING/APP_STARTING, skip LLM calls and just poll
+    if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+        print(f"[WAIT] Cain is {child_state['stage']} — polling health instead of LLM call...")
+        check_and_clear_cooldown()
+        # Quick health check to update stage
+        try:
+            info = hf_api.space_info(CHILD_SPACE_ID)
+            new_stage = info.runtime.stage if info.runtime else "unknown"
+            if new_stage != child_state["stage"]:
+                print(f"[WAIT] Stage changed: {child_state['stage']} → {new_stage}")
+                child_state["stage"] = new_stage
+                child_state["alive"] = (new_stage == "RUNNING")
+            else:
+                print(f"[WAIT] Still {new_stage}... waiting 20s")
+        except Exception as e:
+            print(f"[WAIT] Health check error: {e}")
+        time.sleep(20)
+        continue
+
     do_turn("Eve", "Adam", EVE_SPACE)
     time.sleep(15)
+
+    # Check if we just triggered a build — skip Adam's turn if so
+    if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+        print(f"[SKIP] Cain entered {child_state['stage']} — skipping Adam's turn to avoid wasted LLM call")
+        time.sleep(10)
+        continue
+
     do_turn("Adam", "Eve", ADAM_SPACE)
 
     if len(history) > MAX_HISTORY:
