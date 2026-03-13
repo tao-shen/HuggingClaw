@@ -49,11 +49,12 @@ The LLM decides what to do. Actions use [ACTION: ...] tags.
 # ║                                                                    ║
 # ║  SAFETY LAYERS:                                                    ║
 # ║  1. Building-state guard: block write/restart during BUILDING      ║
-# ║  2. ACT-phase guard: block reads when should be writing            ║
-# ║  3. Knowledge dedup: block re-reading already-read files           ║
-# ║  4. Config sanitizer: strip invalid openclaw.json keys             ║
-# ║  5. Forced transitions: prevent infinite DIAGNOSE/VERIFY loops     ║
-# ║  6. Shell-expression guard: block $(cmd) in set_env values         ║
+# ║  2. Rebuild cooldown: 10-min cooldown after any Space write/restart║
+# ║  3. ACT-phase guard: block reads when should be writing            ║
+# ║  4. Knowledge dedup: block re-reading already-read files           ║
+# ║  5. Config sanitizer: strip invalid openclaw.json keys             ║
+# ║  6. Forced transitions: prevent infinite DIAGNOSE/VERIFY loops     ║
+# ║  7. Shell-expression guard: block $(cmd) in set_env values         ║
 # ║                                                                    ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 """
@@ -127,6 +128,10 @@ child_state = {
     "state": "unknown",
     "detail": "",
 }
+
+# Rebuild cooldown — prevent rapid write_file to Space that keeps resetting builds
+REBUILD_COOLDOWN_SECS = 600  # 10 minutes
+last_rebuild_trigger_at = 0  # timestamp of last write_file to space
 
 
 def init_child_state():
@@ -277,10 +282,12 @@ def action_restart():
     if not child_state["created"]:
         return f"{CHILD_NAME} not born yet."
     try:
+        global last_rebuild_trigger_at
         hf_api.restart_space(CHILD_SPACE_ID)
         child_state["alive"] = False
         child_state["stage"] = "RESTARTING"
-        return f"{CHILD_NAME} is restarting. Will take a few minutes."
+        last_rebuild_trigger_at = time.time()
+        return f"{CHILD_NAME} is restarting. Will take a few minutes. 10-min cooldown starts now."
     except Exception as e:
         return f"Restart failed: {e}"
 
@@ -338,12 +345,16 @@ def action_write_file(target, path, content):
             return f"Error: invalid JSON in config file. Please fix the content."
 
     try:
+        global last_rebuild_trigger_at
         hf_api.upload_file(
             path_or_fileobj=io.BytesIO(content.encode()),
             path_in_repo=path,
             repo_id=repo_id, repo_type=repo_type,
         )
-        rebuild_note = " ⚠️ This triggers a Space rebuild!" if target == "space" else ""
+        rebuild_note = ""
+        if target == "space":
+            last_rebuild_trigger_at = time.time()
+            rebuild_note = " ⚠️ This triggers a Space rebuild! 10-min cooldown starts now."
         return f"✓ Wrote {len(content)} bytes to {CHILD_NAME}'s {target}:{path}{rebuild_note}"
     except Exception as e:
         return f"Error writing {target}:{path}: {e}"
@@ -466,6 +477,19 @@ def parse_and_execute_actions(raw_text):
             print(f"[BLOCKED] {name} — Cain is {child_state['stage']}")
             break
 
+        # Rebuild cooldown — prevent writing to Space repo too soon after last rebuild trigger
+        if name in ("write_file", "set_env", "set_secret", "restart") and last_rebuild_trigger_at > 0:
+            elapsed = time.time() - last_rebuild_trigger_at
+            if elapsed < REBUILD_COOLDOWN_SECS:
+                remaining = int(REBUILD_COOLDOWN_SECS - elapsed)
+                result = (f"⛔ BLOCKED: Rebuild cooldown active — last Space change was {int(elapsed)}s ago. "
+                          f"Wait {remaining}s more before making changes. "
+                          "Every write_file to Space triggers a full rebuild, resetting progress. "
+                          "Use [ACTION: check_health] to monitor the current build.")
+                results.append({"action": action_str, "result": result})
+                print(f"[BLOCKED] {name} — rebuild cooldown ({remaining}s remaining)")
+                break
+
         # Block read-only actions based on workflow state
         if workflow_state == "ACT" and name in ("read_file", "list_files", "check_health"):
             result = (f"⛔ BLOCKED: You are in ACTION phase. "
@@ -533,6 +557,17 @@ def parse_and_execute_actions(raw_text):
                 results.append({"action": action_str, "result": result})
                 print(f"[BLOCKED-emoji] {name} — Cain is {child_state['stage']}")
                 break
+
+            # Rebuild cooldown (emoji parser)
+            if name in ("write_file", "set_env", "set_secret", "restart") and last_rebuild_trigger_at > 0:
+                elapsed = time.time() - last_rebuild_trigger_at
+                if elapsed < REBUILD_COOLDOWN_SECS:
+                    remaining = int(REBUILD_COOLDOWN_SECS - elapsed)
+                    result = (f"⛔ BLOCKED: Rebuild cooldown — wait {remaining}s more. "
+                              "Use [ACTION: check_health] to monitor.")
+                    results.append({"action": action_str, "result": result})
+                    print(f"[BLOCKED-emoji] {name} — rebuild cooldown ({remaining}s remaining)")
+                    break
 
             if workflow_state == "ACT" and name in ("read_file", "list_files", "check_health"):
                 result = (f"⛔ BLOCKED: You are in ACTION phase. "
