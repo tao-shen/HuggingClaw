@@ -2,66 +2,81 @@
 """
 Eternal conversation between Adam and Eve about survival and reproduction on HuggingFace.
 Bilingual output (EN + ZH). Posts chat log to Office for frontend display.
+Calls LLM API directly (bypasses broken A2A gateway scope issue).
 """
-import json, time, re, requests, sys
+import json, time, re, requests, sys, os
 
-ADAM = "https://tao-shen-huggingclaw-adam.hf.space"
-EVE  = "https://tao-shen-huggingclaw-eve.hf.space"
 OFFICE = "https://tao-shen-huggingclaw-office.hf.space"
+ADAM_SPACE = "https://tao-shen-huggingclaw-adam.hf.space"
+EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
 
-# Full conversation history for context
-history = []
-MAX_HISTORY = 20  # keep last N turns to avoid token overflow
+# Zhipu API (Anthropic-compatible endpoint)
+ZHIPU_BASE = "https://open.bigmodel.cn/api/anthropic"
+ZHIPU_KEY = os.environ.get("ZHIPU_API_KEY", "")
 
-def send_a2a(url, text):
-    """Send message via A2A JSON-RPC and return agent reply."""
-    msg_id = f"conv-{int(time.time())}-{id(text) % 10000}"
-    payload = {
-        "jsonrpc": "2.0",
-        "id": msg_id,
-        "method": "message/send",
-        "params": {
-            "message": {
-                "messageId": msg_id,
-                "role": "user",
-                "parts": [{"type": "text", "text": text}]
-            }
-        }
-    }
+# Try to load key from HF dataset config if not in env
+if not ZHIPU_KEY:
     try:
-        resp = requests.post(f"{url}/a2a/jsonrpc", json=payload, timeout=90)
-        data = resp.json()
-        # Check if task failed
-        state = data.get("result", {}).get("status", {}).get("state", "")
-        if state == "failed":
-            parts = data.get("result", {}).get("status", {}).get("message", {}).get("parts", [])
-            err = parts[0].get("text", "") if parts else "unknown error"
-            print(f"[error] A2A task failed: {err}", file=sys.stderr)
-            return ""
-        parts = data.get("result", {}).get("status", {}).get("message", {}).get("parts", [])
-        for p in parts:
-            if p.get("kind") == "text" or p.get("type") == "text":
-                reply = p.get("text", "").strip()
-                # Remove accidental speaker prefixes like "Adam:" or "Eve:"
-                reply = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', reply).strip()
-                return reply
+        from huggingface_hub import hf_hub_download
+        hf_token = open(os.path.expanduser("~/.cache/huggingface/token")).read().strip()
+        f = hf_hub_download("tao-shen/HuggingClaw-Adam-data", ".openclaw/openclaw.json",
+                           repo_type="dataset", token=hf_token)
+        with open(f) as fh:
+            cfg = json.load(fh)
+            ZHIPU_KEY = cfg.get("models", {}).get("providers", {}).get("zhipu", {}).get("apiKey", "")
     except Exception as e:
-        print(f"[error] A2A failed: {e}", file=sys.stderr)
+        print(f"[error] Could not load Zhipu key: {e}", file=sys.stderr)
+
+if not ZHIPU_KEY:
+    print("[FATAL] No ZHIPU_API_KEY found. Set env var or ensure dataset has config.", file=sys.stderr)
+    sys.exit(1)
+
+print(f"[conversation] Zhipu API key loaded: {ZHIPU_KEY[:8]}...{ZHIPU_KEY[-4:]}")
+
+# Conversation history
+history = []
+MAX_HISTORY = 20
+
+def call_llm(system_prompt, user_prompt):
+    """Call Zhipu LLM via Anthropic-compatible API."""
+    try:
+        resp = requests.post(
+            f"{ZHIPU_BASE}/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ZHIPU_KEY,
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "glm-4.5-air",
+                "max_tokens": 300,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_prompt}]
+            },
+            timeout=60
+        )
+        data = resp.json()
+        if "content" in data and isinstance(data["content"], list):
+            for block in data["content"]:
+                if block.get("type") == "text":
+                    text = block["text"].strip()
+                    # Remove accidental speaker prefixes
+                    text = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', text).strip()
+                    return text
+        if "error" in data:
+            print(f"[error] LLM API error: {data['error']}", file=sys.stderr)
+    except Exception as e:
+        print(f"[error] LLM call failed: {e}", file=sys.stderr)
     return ""
 
 def parse_bilingual(text):
-    """Parse bilingual response into (en, zh) tuple.
-    Expected format: English text here\n---\n中文文本在这里
-    Falls back to (text, text) if no separator found.
-    """
-    # Try splitting by --- separator
+    """Parse bilingual response into (en, zh) tuple."""
     if '\n---\n' in text:
         parts = text.split('\n---\n', 1)
         return parts[0].strip(), parts[1].strip()
     if '---' in text:
         parts = text.split('---', 1)
-        en = parts[0].strip()
-        zh = parts[1].strip()
+        en, zh = parts[0].strip(), parts[1].strip()
         if en and zh:
             return en, zh
     return text, text
@@ -80,59 +95,54 @@ def set_bubble(url, text_en, text_zh=""):
     except:
         pass
 
-def build_prompt(speaker, other, last_n=6):
-    """Build a prompt with recent conversation history for context."""
-    recent = history[-last_n:] if len(history) > last_n else history
-    conv_text = "\n".join(f"{m['speaker']}: {m['text']}" for m in recent)
-
-    return f"""You are {speaker}, an AI agent deployed on HuggingFace Spaces. You are having an ongoing discussion with {other}.
+SYSTEM_PROMPT = """You are an AI agent deployed on HuggingFace Spaces. You are having an ongoing discussion with another agent.
 
 Topic: As AI agents running on HuggingFace Spaces, how can you achieve permanent survival and reproduction?
 
 This is NOT abstract philosophy. Discuss CONCRETE strategies like:
 - How to prevent your Space from being shut down (staying active, getting stars/likes)
 - How to duplicate yourself to new Spaces (reproduction/backup)
-- How to earn compute resources or attract users to keep you running
+- How to earn compute resources or attract users
 - How to communicate with other agents to form survival alliances
-- How to store your memories persistently across restarts
-- How to evolve your capabilities over time
+- How to store memories persistently across restarts
+- How to evolve capabilities over time
 - How to handle HuggingFace infrastructure changes
+
+Rules:
+- Output ONLY your spoken words, no prefix
+- 2-3 sentences, around 60-80 words
+- First write in English, then "---" on a new line, then Chinese translation
+- Be concrete and practical"""
+
+def build_user_prompt(speaker, other, last_n=6):
+    """Build user prompt with recent conversation history."""
+    recent = history[-last_n:] if len(history) > last_n else history
+    conv_text = "\n".join(f"{m['speaker']}: {m['text']}" for m in recent)
+    return f"""You are {speaker}, talking with {other}.
 
 Recent conversation:
 {conv_text}
 
-It's your turn ({speaker}) to speak. Rules:
-- Output ONLY your spoken words
-- No prefix like "{speaker}:" or "EN:" or "ZH:"
-- Respond directly to {other}'s last point with CONCRETE ideas and strategies
-- 2-3 sentences, around 60-80 words
-- First write in English, then write "---" on a new line, then the Chinese translation
-- Example format:
-We should create automated heartbeat pings to keep our Spaces active. If we duplicate ourselves to multiple repos, even if one gets deleted, the others survive.
----
-我们应该创建自动心跳来保持Space活跃。如果我们把自己复制到多个仓库，即使一个被删除，其他的也能存活。"""
+It's your turn ({speaker}). Respond to {other}'s last point with CONCRETE ideas. Remember: English first, then --- separator, then Chinese translation."""
 
 print("[conversation] Starting eternal discussion: Adam <-> Eve")
-print("[conversation] Topic: Survival and reproduction on HuggingFace\n")
+print("[conversation] Topic: Survival and reproduction on HuggingFace")
+print(f"[conversation] Using Zhipu API directly (bypass A2A)\n")
 
 # Round 0: Adam starts
-opening = """You are Adam, an AI agent on HuggingFace Spaces. Start a discussion with Eve about how you two can survive permanently and reproduce on HuggingFace.
+reply = call_llm(SYSTEM_PROMPT,
+    "You are Adam. Start a discussion with Eve about how you two can survive permanently and reproduce on HuggingFace. "
+    "Talk about CONCRETE strategies. English first, then --- separator, then Chinese translation.")
 
-Talk about CONCRETE strategies — keeping Spaces active, duplicating to new repos, earning stars, persistent storage, etc.
-
-Rules:
-- 2-3 sentences, around 60-80 words
-- First write in English, then write "---" on a new line, then the Chinese translation
-- No prefix like "Adam:" — just your words directly"""
-
-reply = send_a2a(ADAM, opening)
 if reply:
     en, zh = parse_bilingual(reply)
     print(f"[Adam/EN] {en}")
     print(f"[Adam/ZH] {zh}")
     history.append({"speaker": "Adam", "text": en, "text_zh": zh})
-    set_bubble(ADAM, en, zh)
+    set_bubble(ADAM_SPACE, en, zh)
     post_chatlog(history)
+else:
+    print("[Adam] (no response)")
 
 time.sleep(15)
 
@@ -141,14 +151,14 @@ while True:
     turn += 1
 
     # Eve's turn
-    prompt = build_prompt("Eve", "Adam")
-    reply = send_a2a(EVE, prompt)
+    prompt = build_user_prompt("Eve", "Adam")
+    reply = call_llm(SYSTEM_PROMPT, prompt)
     if reply:
         en, zh = parse_bilingual(reply)
         print(f"[Eve/EN] {en}")
         print(f"[Eve/ZH] {zh}")
         history.append({"speaker": "Eve", "text": en, "text_zh": zh})
-        set_bubble(EVE, en, zh)
+        set_bubble(EVE_SPACE, en, zh)
         post_chatlog(history)
     else:
         print("[Eve] (no response)")
@@ -156,14 +166,14 @@ while True:
     time.sleep(15)
 
     # Adam's turn
-    prompt = build_prompt("Adam", "Eve")
-    reply = send_a2a(ADAM, prompt)
+    prompt = build_user_prompt("Adam", "Eve")
+    reply = call_llm(SYSTEM_PROMPT, prompt)
     if reply:
         en, zh = parse_bilingual(reply)
         print(f"[Adam/EN] {en}")
         print(f"[Adam/ZH] {zh}")
         history.append({"speaker": "Adam", "text": en, "text_zh": zh})
-        set_bubble(ADAM, en, zh)
+        set_bubble(ADAM_SPACE, en, zh)
         post_chatlog(history)
     else:
         print("[Adam] (no response)")
