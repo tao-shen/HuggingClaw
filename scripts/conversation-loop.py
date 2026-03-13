@@ -948,6 +948,69 @@ def post_chatlog(entries):
         pass
 
 
+# ── Persistent conversation log → HF Dataset ──────────────────────────────
+HOME_DATASET_ID = "tao-shen/HuggingClaw-Home-data"
+CHATLOG_PATH = "conversation-log/chatlog.jsonl"
+_chatlog_buffer = []  # Buffer entries, flush every N turns to avoid API spam
+CHATLOG_FLUSH_INTERVAL = 3  # Flush every 3 turns
+
+def persist_turn(speaker, turn_num, text_en, text_zh, actions, workflow_state_str, child_stage):
+    """Append a turn record to buffer. Flush to HF Dataset periodically."""
+    import datetime
+    record = {
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "turn": turn_num,
+        "speaker": speaker,
+        "text_en": text_en,
+        "text_zh": text_zh,
+        "actions": [{"action": a["action"], "result": a["result"][:500]} for a in actions],
+        "workflow_state": workflow_state_str,
+        "child_stage": child_stage,
+    }
+    _chatlog_buffer.append(json.dumps(record, ensure_ascii=False))
+
+    # Also append to local file as backup
+    try:
+        with open("/tmp/conversation-loop-full.jsonl", "a") as f:
+            f.write(_chatlog_buffer[-1] + "\n")
+    except:
+        pass
+
+    # Flush to HF Dataset every N turns
+    if len(_chatlog_buffer) >= CHATLOG_FLUSH_INTERVAL:
+        flush_chatlog()
+
+
+def flush_chatlog():
+    """Upload buffered entries to HF Dataset by appending to the jsonl file."""
+    global _chatlog_buffer
+    if not _chatlog_buffer:
+        return
+    batch = "\n".join(_chatlog_buffer) + "\n"
+    _chatlog_buffer = []
+    try:
+        # Try to download existing file and append
+        existing = ""
+        try:
+            dl = hf_hub_download(HOME_DATASET_ID, CHATLOG_PATH,
+                                 repo_type="dataset", token=HF_TOKEN)
+            with open(dl) as f:
+                existing = f.read()
+        except:
+            pass  # File doesn't exist yet, start fresh
+        combined = existing + batch
+        hf_api.upload_file(
+            path_or_fileobj=io.BytesIO(combined.encode()),
+            path_in_repo=CHATLOG_PATH,
+            repo_id=HOME_DATASET_ID, repo_type="dataset",
+        )
+        print(f"[PERSIST] Flushed {batch.count(chr(10))} turn(s) to {HOME_DATASET_ID}/{CHATLOG_PATH}")
+    except Exception as e:
+        # Re-buffer on failure so we don't lose data
+        _chatlog_buffer = batch.strip().split("\n") + _chatlog_buffer
+        print(f"[PERSIST] Flush failed: {e}")
+
+
 def set_bubble(url, text_en, text_zh=""):
     try:
         requests.post(f"{url}/api/bubble",
@@ -1322,6 +1385,7 @@ def do_turn(speaker, other, space_url):
 
     set_bubble(space_url, en, zh)
     post_chatlog(history)
+    persist_turn(speaker, turn_count, en, zh, action_results, workflow_state, child_state["stage"])
     return True
 
 
@@ -1333,6 +1397,14 @@ def do_turn(speaker, other, space_url):
 #  4. Sub-agents may spawn for delegated tasks (parallel LLM calls)
 #  5. History trimmed to MAX_HISTORY (24) to control context window
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Flush conversation log on exit (SIGTERM from kill, or normal exit)
+import atexit, signal
+atexit.register(flush_chatlog)
+def _signal_flush(signum, frame):
+    flush_chatlog()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, _signal_flush)
 
 print("\n" + "="*60)
 print("  Adam & Eve — Multi-Action Agents (GLM-4.5)")
@@ -1376,6 +1448,7 @@ if reply:
     history.append(entry)
     set_bubble(ADAM_SPACE, en, zh)
     post_chatlog(history)
+    persist_turn("Adam", 0, en, zh, actions, workflow_state, child_state["stage"])
 
 time.sleep(20)
 
