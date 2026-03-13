@@ -171,10 +171,26 @@ def action_check_health():
         child_state["stage"] = stage
         child_state["alive"] = (stage == "RUNNING")
         if stage in ("RUNTIME_ERROR", "BUILD_ERROR"):
+            # Get actual error message from runtime API
+            error_detail = ""
+            try:
+                rresp = requests.get(
+                    f"https://huggingface.co/api/spaces/{CHILD_SPACE_ID}/runtime",
+                    headers={"Authorization": f"Bearer {HF_TOKEN}"}, timeout=10)
+                if rresp.ok:
+                    rdata = rresp.json()
+                    error_detail = rdata.get("errorMessage", "")
+                    # Extract just the key error lines
+                    if error_detail:
+                        lines = [l.strip() for l in error_detail.split('\n') if l.strip() and '│' not in l]
+                        error_detail = " | ".join(lines[-5:])  # Last 5 meaningful lines
+            except:
+                pass
             return (f"{CHILD_NAME} has a {stage}! "
-                    f"To diagnose: read the Dockerfile [ACTION: read_file:space:Dockerfile], "
-                    f"check scripts [ACTION: read_file:space:scripts/token-redirect.cjs], "
-                    f"or try [ACTION: restart] to see if it self-heals.")
+                    f"Error: {error_detail or 'unknown'}. "
+                    f"Options: [ACTION: restart] or fix the config with [ACTION: write_file:dataset:.openclaw/openclaw.json]")
+        if stage in ("BUILDING", "STARTING", "APP_STARTING"):
+            return f"{CHILD_NAME} is starting up (stage: {stage}). Be patient."
         return f"{CHILD_NAME} stage: {stage}. {'Running but API not responding.' if stage == 'RUNNING' else ''}"
     except Exception as e:
         return f"Cannot reach {CHILD_NAME}: {e}"
@@ -224,6 +240,27 @@ def action_write_file(target, path, content):
     """Write a file to the child's Space or Dataset."""
     repo_type = "space" if target == "space" else "dataset"
     repo_id = CHILD_SPACE_ID if target == "space" else CHILD_DATASET_ID
+
+    # Safety: validate openclaw.json before writing
+    if path.endswith("openclaw.json"):
+        try:
+            cfg = json.loads(content)
+            # Remove keys known to cause RUNTIME_ERROR in OpenClaw
+            invalid_keys = ["agent", "auth.defaultScope", "gateway.auth.scope"]
+            removed = []
+            for k in invalid_keys:
+                if k in cfg:
+                    del cfg[k]
+                    removed.append(k)
+            if "models" in cfg and "defaultModel" in cfg["models"]:
+                del cfg["models"]["defaultModel"]
+                removed.append("models.defaultModel")
+            if removed:
+                content = json.dumps(cfg, indent=2)
+                print(f"[SAFETY] Removed invalid config keys: {removed}")
+        except json.JSONDecodeError:
+            return f"Error: invalid JSON in config file. Please fix the content."
+
     try:
         hf_api.upload_file(
             path_or_fileobj=io.BytesIO(content.encode()),
@@ -433,6 +470,8 @@ def set_bubble(url, text_en, text_zh=""):
 history = []
 MAX_HISTORY = 24
 last_action_results = []
+action_history = []  # Global log: [{"turn": N, "speaker": "Adam", "action": "...", "result": "..."}]
+turn_count = 0
 
 
 def get_child_status():
@@ -512,27 +551,48 @@ def build_user_prompt(speaker, other):
         for ar in last_action_results:
             action_context += f"  [{ar['action']}]:\n{ar['result']}\n"
 
-    # Guidance based on state — prevent action loops
+    # Guidance based on global action history — prevent loops, push toward progress
     guidance = ""
     recent_actions = [ar["action"].split(":")[0] for ar in last_action_results] if last_action_results else []
+
+    # Count action types in last 6 actions globally
+    recent_global = action_history[-6:] if action_history else []
+    global_action_names = [a["action"].split(":")[0] for a in recent_global]
+    read_count = global_action_names.count("read_file")
+    check_count = global_action_names.count("check_health")
+    list_count = global_action_names.count("list_files")
+    write_count = global_action_names.count("write_file")
+
     if not child_state["created"]:
         guidance = "Your child hasn't been born yet. Use [ACTION: create_child] now!"
-    elif "check_health" in recent_actions or "list_files" in recent_actions:
-        guidance = ("You already checked health/listed files. Now READ a specific file to understand the problem. "
-                    "Try [ACTION: read_file:space:Dockerfile] or [ACTION: read_file:space:scripts/token-redirect.cjs] "
-                    "or [ACTION: read_file:dataset:.openclaw/openclaw.json]. "
-                    "DO NOT repeat check_health or list_files — move forward!")
-    elif "read_file" in recent_actions:
-        guidance = ("You've read a file. Now DECIDE: what needs to change? "
-                    "Use [ACTION: write_file:space:PATH] or [ACTION: write_file:dataset:PATH] to make improvements, "
-                    "or [ACTION: restart] if you need to apply changes.")
+    elif check_count + list_count >= 3 and write_count == 0 and read_count == 0:
+        guidance = ("STOP checking health and listing files repeatedly! "
+                    "READ a specific file: [ACTION: read_file:space:Dockerfile] or "
+                    "[ACTION: read_file:dataset:.openclaw/openclaw.json]")
+    elif read_count >= 3 and write_count == 0:
+        guidance = ("You've read enough files. It's time to ACT! "
+                    "DECIDE what to change and use [ACTION: write_file:...] to make an improvement, "
+                    "or use [ACTION: restart] to restart Cain. Stop reading and START improving!")
     elif "write_file" in recent_actions:
-        guidance = ("You just modified a file. If it was a Space file, it triggers a rebuild. "
-                    "Use [ACTION: check_health] to see if Cain is recovering, or [ACTION: restart] to apply changes.")
+        guidance = ("You just modified a file. Good! Now verify: "
+                    "use [ACTION: check_health] to see if Cain is recovering, "
+                    "or [ACTION: restart] to apply changes.")
+    elif "restart" in recent_actions:
+        guidance = ("You restarted Cain. Wait a moment, then [ACTION: check_health] to see the result.")
+    elif "check_health" in recent_actions and child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR"):
+        guidance = ("Cain has an error! Read the config [ACTION: read_file:dataset:.openclaw/openclaw.json] "
+                    "or try [ACTION: restart]. Don't just check_health again — take action to fix it!")
+    elif "check_health" in recent_actions and child_state["alive"]:
+        guidance = ("Cain is healthy! Think about improvements: "
+                    "read a file to understand it, then write an improved version. "
+                    "Or [ACTION: send_bubble:Hello Cain!] to communicate with your child.")
+    elif "read_file" in recent_actions:
+        guidance = ("You've read a file. Now DECIDE what to change and use "
+                    "[ACTION: write_file:space:PATH] or [ACTION: write_file:dataset:PATH] to improve it. "
+                    "Or discuss with your partner what you learned.")
     else:
-        guidance = ("Explore your child. Use [ACTION: read_file:space:Dockerfile] to see the build, "
-                    "or [ACTION: read_file:dataset:.openclaw/openclaw.json] to see the config. "
-                    "Don't just check_health repeatedly — dig into the actual files!")
+        guidance = ("Explore your child: [ACTION: read_file:space:Dockerfile] to see the build, "
+                    "or [ACTION: read_file:dataset:.openclaw/openclaw.json] for config.")
 
     return f"""You are {speaker}, talking with {other}.
 
@@ -548,7 +608,8 @@ If you take an action, put [ACTION: ...] after your dialogue, before the --- sep
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn with potential actions."""
-    global last_action_results
+    global last_action_results, turn_count
+    turn_count += 1
 
     system = build_system_prompt()
     user = build_user_prompt(speaker, other)
@@ -561,6 +622,9 @@ def do_turn(speaker, other, space_url):
     # Parse and execute any actions
     clean_text, action_results = parse_and_execute_actions(raw_reply)
     last_action_results = action_results
+    for ar in action_results:
+        action_history.append({"turn": turn_count, "speaker": speaker,
+                               "action": ar["action"], "result": ar["result"][:200]})
 
     # Parse bilingual
     en, zh = parse_bilingual(clean_text)
