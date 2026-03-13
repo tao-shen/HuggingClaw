@@ -872,9 +872,11 @@ HOW IT WORKS:
 - If Claude Code is BUSY, discuss its progress and plan what to do next.
 
 WORKFLOW EACH TURN:
-1. Discuss with your partner (2-3 sentences) — react to context, CC output, partner's observations
-2. If Claude Code is IDLE: write a [TASK]...[/TASK] to assign new work
+1. Discuss with your partner (1-2 sentences) — react to context, CC output, partner's observations
+2. If Claude Code is IDLE: YOU MUST write a [TASK]...[/TASK] to assign new work. Discussion alone is NOT enough.
 3. If Claude Code is BUSY: discuss its progress, no [TASK] needed
+
+CRITICAL: If Claude Code is IDLE and {CHILD_NAME} is RUNNING, you MUST assign a task. Do NOT just discuss—ACT!
 
 IMPORTANT KNOWLEDGE — HuggingFace Spaces CONFIG_ERROR:
 - "Collision on variables and secrets names" = env VARIABLE and SECRET with SAME NAME.
@@ -953,9 +955,11 @@ def build_user_prompt(speaker, other, ctx):
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
         parts.append(f"\n⏳ {CHILD_NAME} is {child_state['stage']}. Discuss what to check next. Assign a review [TASK] if CC is idle.")
     elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
-        parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! Write a [TASK] for Claude Code to fix it.")
+        parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! IMMEDIATELY write a [TASK] for Claude Code to fix it.")
+    elif child_state["alive"] and cc_status.get("result"):
+        parts.append(f"\n✅ {CHILD_NAME} is alive. Claude Code JUST FINISHED a task. Review the result above, then write a NEW [TASK] for the next improvement.")
     elif child_state["alive"]:
-        parts.append(f"\n✅ {CHILD_NAME} is alive and CC is idle. Write a [TASK] to improve {CHILD_NAME}.")
+        parts.append(f"\n✅ {CHILD_NAME} is alive and Claude Code is IDLE. YOU MUST write a [TASK]...[/TASK] block with specific work for Claude Code. Do NOT just discuss—ACT!")
     else:
         parts.append(f"\nAnalyze the situation and write a [TASK] if CC is idle.")
 
