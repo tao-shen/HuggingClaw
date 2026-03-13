@@ -352,23 +352,34 @@ def action_claude_code(task):
 
     print(f"[CLAUDE-CODE] Running: {task[:200]}...")
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["claude", "-p", task, "--output-format", "text"],
             cwd=CLAUDE_WORK_DIR,
             env=env,
-            timeout=CLAUDE_TIMEOUT,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
-        output = (result.stdout or "") + (result.stderr or "")
+        output_lines = []
+        deadline = time.time() + CLAUDE_TIMEOUT
+        for line in proc.stdout:
+            line = line.rstrip('\n')
+            print(f"  [CC] {line}")
+            output_lines.append(line)
+            if time.time() > deadline:
+                proc.kill()
+                output_lines.append("(killed: timeout)")
+                break
+        proc.wait(timeout=10)
+        output = '\n'.join(output_lines)
         if not output.strip():
             output = "(no output)"
-    except subprocess.TimeoutExpired:
-        return "Claude Code timed out after 5 minutes."
     except FileNotFoundError:
         return "Claude Code CLI not found. Is @anthropic-ai/claude-code installed?"
     except Exception as e:
         return f"Claude Code failed: {e}"
+    print(f"[CLAUDE-CODE] Done ({len(output)} chars, exit={proc.returncode})")
 
     # 3. Push changes back to Cain's Space
     try:
@@ -814,6 +825,9 @@ if reply:
         print(f"[Adam/ZH] {zh}")
     for ar in actions:
         print(f"[Adam/DID] {ar['action']}")
+        if ar['action'] == 'claude_code':
+            result_preview = ar['result'][:800].replace('\n', '\n  ')
+            print(f"  [CC-RESULT] {result_preview}")
     entry = {"speaker": "Adam", "text": en, "text_zh": zh}
     if actions:
         labels = " ".join(f"🔧{ar['action'].split(':')[0]}" for ar in actions)
@@ -855,6 +869,10 @@ def do_turn(speaker, other, space_url):
     if action_results:
         for ar in action_results:
             print(f"[{speaker}/DID] {ar['action']}")
+            # Log Claude Code result summary so agents can see what happened
+            if ar['action'] == 'claude_code':
+                result_preview = ar['result'][:800].replace('\n', '\n  ')
+                print(f"  [CC-RESULT] {result_preview}")
         print(f"[{speaker}] Turn #{turn_count}: {len(action_results)} action(s) in {elapsed:.1f}s")
     else:
         print(f"[{speaker}] Turn #{turn_count}: discussion only ({elapsed:.1f}s)")
