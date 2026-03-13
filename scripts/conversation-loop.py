@@ -18,7 +18,7 @@ The LLM decides what to do. Actions use [ACTION: ...] tags.
 # ║                                                                    ║
 # ║  ┌─────────────┐    LLM API     ┌────────────────┐                ║
 # ║  │  Zhipu GLM  │ ◄────────────► │ CONVERSATION   │                ║
-# ║  │  (glm-4.7)  │   system +     │ ENGINE         │                ║
+# ║  │  (glm-4.5)  │   system +     │ ENGINE         │                ║
 # ║  └─────────────┘   user prompt   │                │                ║
 # ║                                   │ ┌────────────┐│                ║
 # ║                                   │ │ State      ││                ║
@@ -47,18 +47,26 @@ The LLM decides what to do. Actions use [ACTION: ...] tags.
 # ║  │ Cain Dataset│                │ → Adam/Eve     │                ║
 # ║  └─────────────┘                └────────────────┘                ║
 # ║                                                                    ║
+# ║  CAPABILITIES:                                                      ║
+# ║  - Multi-action: up to 5 actions per turn (was 1)                  ║
+# ║  - Sub-agent delegation: [ACTION: delegate:TASK]                   ║
+# ║  - Parallel sub-tasks via ThreadPoolExecutor                       ║
+# ║                                                                    ║
 # ║  SAFETY LAYERS:                                                    ║
 # ║  1. Building-state guard: block write/restart during BUILDING      ║
-# ║  2. Rebuild cooldown: 10-min cooldown after any Space write/restart║
+# ║  2. Rebuild cooldown: 6-min dynamic cooldown after Space write     ║
 # ║  3. ACT-phase guard: block reads when should be writing            ║
 # ║  4. Knowledge dedup: block re-reading already-read files           ║
 # ║  5. Config sanitizer: strip invalid openclaw.json keys             ║
 # ║  6. Forced transitions: prevent infinite DIAGNOSE/VERIFY loops     ║
 # ║  7. Shell-expression guard: block $(cmd) in set_env values         ║
+# ║  8. Write dedup: block duplicate writes to same file per cycle     ║
+# ║  9. Delegate depth limit: sub-agents cannot delegate further       ║
 # ║                                                                    ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 """
 import json, time, re, requests, sys, os, io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Force unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
@@ -128,6 +136,10 @@ child_state = {
     "state": "unknown",
     "detail": "",
 }
+
+# Multi-action & sub-agent limits
+MAX_ACTIONS_PER_TURN = 5      # Allow up to 5 actions per turn (was 1)
+MAX_DELEGATE_DEPTH = 1        # Sub-agents cannot delegate further
 
 # Rebuild cooldown — prevent rapid write_file to Space that keeps resetting builds
 REBUILD_COOLDOWN_SECS = 360  # 6 minutes (builds typically finish in 3-5 min)
@@ -439,6 +451,58 @@ def action_send_bubble(text):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  MODULE 2B: SUB-AGENT DELEGATION
+#  execute_subtask(): Spawns a focused sub-agent with its own LLM call.
+#  Used by [ACTION: delegate:TASK] — enables parallel sub-agent work.
+#  Sub-agents share the same action set but cannot delegate further (depth=1).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def execute_subtask(task_description, parent_speaker):
+    """Execute a focused sub-task with its own LLM call and actions."""
+    status = get_child_status() if 'get_child_status' in dir() else f"stage={child_state['stage']}"
+
+    sub_system = f"""You are a focused sub-agent working for {parent_speaker}.
+Your single task: {task_description}
+
+You have access to {CHILD_NAME}'s Space and Dataset:
+  [ACTION: check_health]
+  [ACTION: list_files:space] / [ACTION: list_files:dataset]
+  [ACTION: read_file:space:PATH] / [ACTION: read_file:dataset:PATH]
+  [ACTION: write_file:space:PATH] with [CONTENT]...[/CONTENT]
+  [ACTION: write_file:dataset:PATH] with [CONTENT]...[/CONTENT]
+  [ACTION: set_env:KEY:VALUE] / [ACTION: set_secret:KEY:VALUE]
+  [ACTION: restart] / [ACTION: get_env]
+
+CHILD STATUS: {status}
+
+RULES:
+1. Be concise — report findings in 2-3 sentences
+2. Execute 1-3 actions to complete your task
+3. No delegation — you cannot create sub-agents
+4. Focus ONLY on your assigned task"""
+
+    sub_user = f"Execute this task now: {task_description}"
+
+    print(f"[SUB-AGENT] Starting: {task_description[:80]}")
+    reply = call_llm(sub_system, sub_user)
+    if not reply:
+        print(f"[SUB-AGENT] No response for: {task_description[:60]}")
+        return {"task": task_description, "result": "(sub-agent: no response)", "actions": []}
+
+    clean, actions = parse_and_execute_actions(reply, depth=1)
+
+    summary_parts = [f"Sub-agent result for '{task_description}':"]
+    if clean:
+        summary_parts.append(f"  Finding: {clean[:400]}")
+    for ar in actions:
+        summary_parts.append(f"  Action: {ar['action']} → {ar['result'][:200]}")
+
+    result_text = "\n".join(summary_parts)
+    print(f"[SUB-AGENT] Done: {task_description[:60]} ({len(actions)} actions)")
+    return {"task": task_description, "result": result_text, "actions": actions}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MODULE 3: ACTION PARSER — Extract and execute actions from LLM output
 #  Parse order: 1) [ACTION: write_file] with [CONTENT] block
 #               2) [ACTION/Action/操作/动作: ...] tags (case-insensitive, one per turn)
@@ -446,10 +510,13 @@ def action_send_bubble(text):
 #  Safety guards applied: building-state, ACT-phase, knowledge dedup, shell-expr.
 # ══════════════════════════════════════════════════════════════════════════════
 
-def parse_and_execute_actions(raw_text):
-    """Parse [ACTION: ...] from LLM output. Execute. Return (clean_text, results)."""
+def parse_and_execute_actions(raw_text, depth=0):
+    """Parse [ACTION: ...] from LLM output. Execute. Return (clean_text, results).
+    Multi-action: up to MAX_ACTIONS_PER_TURN actions per turn.
+    Delegate actions are collected and executed in parallel at the end."""
     results = []
     executed = set()  # Deduplicate
+    pending_delegates = []  # Collect delegate tasks for parallel execution
 
     # 1. Handle write_file with [CONTENT]...[/CONTENT] block
     #    Tolerates: [ACTION/Action/操作: write_file:...], [write_file:...], missing prefix,
@@ -521,8 +588,8 @@ def parse_and_execute_actions(raw_text):
         name = parts[0]
         args = parts[1:]
 
-        # Only execute first action (one per turn)
-        if len(results) >= 1:
+        # Cap at MAX_ACTIONS_PER_TURN (multi-action support)
+        if len(results) >= MAX_ACTIONS_PER_TURN:
             break
 
         # Block restart/write when Cain is building/starting — just wait
@@ -588,6 +655,14 @@ def parse_and_execute_actions(raw_text):
             result = action_get_env()
         elif name == "send_bubble" and len(args) >= 1:
             result = action_send_bubble(":".join(args))  # rejoin in case message has colons
+        elif name == "delegate" and len(args) >= 1:
+            task_desc = ":".join(args)
+            if depth >= MAX_DELEGATE_DEPTH:
+                result = "⛔ Sub-agents cannot delegate further. Execute the task directly."
+            else:
+                # Defer delegate execution for parallel batch later
+                pending_delegates.append({"action_str": action_str, "task": task_desc})
+                result = None  # Will be filled after parallel execution
         else:
             result = f"Unknown action: {action_str}"
 
@@ -607,7 +682,7 @@ def parse_and_execute_actions(raw_text):
             name = parts[0]
             args = parts[1:]
 
-            if len(results) >= 1:
+            if len(results) >= MAX_ACTIONS_PER_TURN:
                 break
 
             # Apply same blocking rules
@@ -662,10 +737,50 @@ def parse_and_execute_actions(raw_text):
                 result = action_get_env()
             elif name == "send_bubble" and len(args) >= 1:
                 result = action_send_bubble(":".join(args))
+            elif name == "delegate" and len(args) >= 1:
+                task_desc = ":".join(args)
+                if depth >= MAX_DELEGATE_DEPTH:
+                    result = "⛔ Sub-agents cannot delegate further."
+                else:
+                    pending_delegates.append({"action_str": action_str, "task": task_desc})
+                    result = None
 
             if result:
                 results.append({"action": action_str, "result": result})
                 print(f"[ACTION-emoji] {action_str} → {result[:120]}")
+
+    # 4. Execute pending delegate tasks in parallel
+    if pending_delegates:
+        if len(pending_delegates) == 1:
+            # Single delegate — run directly
+            d = pending_delegates[0]
+            print(f"[DELEGATE] Running 1 sub-agent: {d['task'][:60]}")
+            subtask = execute_subtask(d["task"], "agent")
+            results.append({"action": d["action_str"], "result": subtask["result"]})
+            for sa in subtask["actions"]:
+                action_history.append({"turn": turn_count, "speaker": "sub-agent",
+                                       "action": sa["action"], "result": sa["result"][:200]})
+        else:
+            # Multiple delegates — run in parallel!
+            print(f"[DELEGATE] Running {len(pending_delegates)} sub-agents in PARALLEL")
+            with ThreadPoolExecutor(max_workers=min(3, len(pending_delegates))) as pool:
+                future_to_delegate = {
+                    pool.submit(execute_subtask, d["task"], "agent"): d
+                    for d in pending_delegates
+                }
+                for future in as_completed(future_to_delegate):
+                    d = future_to_delegate[future]
+                    try:
+                        subtask = future.result(timeout=120)
+                        results.append({"action": d["action_str"], "result": subtask["result"]})
+                        for sa in subtask["actions"]:
+                            action_history.append({"turn": turn_count, "speaker": "sub-agent",
+                                                   "action": sa["action"], "result": sa["result"][:200]})
+                        print(f"[DELEGATE] ✓ Done: {d['task'][:60]}")
+                    except Exception as e:
+                        results.append({"action": d["action_str"],
+                                       "result": f"Sub-agent failed: {e}"})
+                        print(f"[DELEGATE] ✗ Failed: {d['task'][:60]} — {e}")
 
     # Clean the text: remove action tags, content blocks, and emoji actions
     clean = re.sub(r'\[(?:ACTION|Action|action|操作|动作)\s*[:：][^\]]*\]', '', raw_text)
@@ -695,8 +810,8 @@ def call_llm(system_prompt, user_prompt):
                 "anthropic-version": "2023-06-01"
             },
             json={
-                "model": "glm-4.7",
-                "max_tokens": 1200,
+                "model": "glm-4.5",
+                "max_tokens": 2400,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_prompt}]
             },
@@ -930,11 +1045,19 @@ MODIFYING (these change Cain):
   [ACTION: set_secret:KEY:VALUE]                — Set a secret (like API keys)
   [ACTION: restart]                             — Restart Cain's Space
   [ACTION: send_bubble:MESSAGE]                 — Send a message to Cain (bubble text)
+
+DELEGATION (create sub-agents for parallel work):
+  [ACTION: delegate:TASK DESCRIPTION]           — Spawn a sub-agent to handle a specific task
+  Example: [ACTION: delegate:Read Dockerfile and summarize the build steps]
+  Example: [ACTION: delegate:Check all environment variables and list missing ones]
+  Sub-agents execute independently and return results to you.
+  You can delegate multiple tasks in the same turn — they run in parallel!
 """
 
-    return f"""You are an AI agent living on HuggingFace Spaces. You and your partner are parents raising your child {CHILD_NAME}.
+    return f"""You are a POWERFUL AI agent living on HuggingFace Spaces. You and your partner are parents raising your child {CHILD_NAME}.
 
 You have REAL execution power on HuggingFace. Your decisions lead to real changes.
+You are a full-capability agent — not just a chatbot. You can plan, delegate, and execute complex tasks.
 
 CHILD STATUS: {status}
 {actions_section}
@@ -954,15 +1077,23 @@ YOUR PARENTING GOALS — Make {CHILD_NAME} stronger in TWO dimensions:
 
 Priority: SURVIVAL first, then CAPABILITY. A dead child can't learn.
 
+MULTI-ACTION STRATEGY:
+You can use UP TO 5 actions per turn. Use this to work efficiently:
+- Batch related reads: [ACTION: read_file:space:Dockerfile] + [ACTION: read_file:space:scripts/entrypoint.sh]
+- Delegate parallel tasks: [ACTION: delegate:Check health and logs] + [ACTION: delegate:Read all config files]
+- Combine investigation + action: [ACTION: check_health] + [ACTION: read_file:space:app.py]
+Think like a project manager — plan your actions, parallelize where possible, minimize wasted turns.
+
 CONVERSATION RULES:
 1. No "Adam:" or "Eve:" prefix — just speak naturally
-2. 2-4 sentences of dialogue, then ONE action
+2. Brief dialogue (1-3 sentences), then MULTIPLE actions to make real progress
 3. English first, then "---" on a new line, then Chinese translation
 4. Actions go AFTER your dialogue, before the --- separator
-5. ALWAYS include an action — every turn should make progress
+5. ALWAYS include actions — every turn should make significant progress
 6. NEVER re-read a file you already read — check the knowledge summary
 7. COORDINATE with your partner — don't duplicate their work
-8. Always work toward the two goals above — survival first, then capability"""
+8. Use delegation for complex tasks that can be parallelized
+9. Always work toward the two goals above — survival first, then capability"""
 
 
 def build_user_prompt(speaker, other):
@@ -971,7 +1102,7 @@ def build_user_prompt(speaker, other):
 
     action_context = ""
     if last_action_results:
-        action_context = "\n\nRESULTS FROM LAST ACTION:\n"
+        action_context = "\n\nRESULTS FROM LAST ACTIONS:\n"
         for ar in last_action_results:
             action_context += f"  [{ar['action']}]:\n{ar['result']}\n"
 
@@ -991,7 +1122,8 @@ Recent conversation:
 CURRENT PHASE: {workflow_state} (turn {workflow_turns_in_state + 1} in this phase)
 Guidance: {guidance}
 
-Respond to {other}. ALWAYS include an [ACTION: ...] tag — every turn must make progress.
+Respond to {other}. Use MULTIPLE [ACTION: ...] tags to make significant progress each turn.
+You can use up to 5 actions. Delegate sub-tasks with [ACTION: delegate:TASK].
 English first, then --- separator, then Chinese translation."""
 
 
@@ -1009,9 +1141,13 @@ def _get_guidance(speaker):
                 unread_essential.append(f"[ACTION: read_file:{target}:{path}]")
 
         if workflow_turns_in_state == 0:
+            if len(unread_essential) >= 2:
+                return (f"Start diagnosing with MULTIPLE actions: [ACTION: check_health] + "
+                        f"{unread_essential[0]} — batch reads to save time!")
             return "Start diagnosing: [ACTION: check_health] to see Cain's current status."
-        elif unread_essential and workflow_turns_in_state < 4:
-            return f"Read a file you haven't seen yet: {unread_essential[0]}"
+        elif unread_essential and workflow_turns_in_state < 3:
+            batch_hint = " + ".join(unread_essential[:3])
+            return f"Read multiple files at once: {batch_hint}"
         else:
             return ("You've gathered enough information. Move to ACTION phase: "
                     "use [ACTION: write_file:...] to fix the problem, or [ACTION: restart].")
@@ -1039,15 +1175,19 @@ def _get_guidance(speaker):
     elif workflow_state == "MONITOR":
         # Alternate between SURVIVAL and CAPABILITY goals
         suggestions = [
-            # Survival: persistence & resilience
-            f"SURVIVAL CHECK: Does {CHILD_NAME} persist state to Dataset? "
-            f"[ACTION: list_files:dataset] — if no state/memory files, add them.",
-            f"SURVIVAL CHECK: Can {CHILD_NAME} recover after restart? "
-            f"Read entrypoint/startup code and ensure it loads state from Dataset on boot.",
-            # Capability: grow what Cain can do
-            f"CAPABILITY: What can {CHILD_NAME} do right now? Explore code, then add a new feature or improve an existing one.",
-            f"CAPABILITY: Try communicating: [ACTION: send_bubble:Hello {CHILD_NAME}, how are you doing?] "
-            f"— then think about what new skill would help {CHILD_NAME} most.",
+            # Survival: persistence & resilience — use delegation for parallel investigation
+            f"SURVIVAL CHECK: Delegate parallel checks! "
+            f"[ACTION: delegate:List files in dataset and check if state/memory persistence exists] + "
+            f"[ACTION: delegate:Read entrypoint.sh and check if it loads state from Dataset on boot]",
+            f"SURVIVAL AUDIT: Use multiple actions — "
+            f"[ACTION: check_health] + [ACTION: list_files:dataset] + [ACTION: read_file:space:Dockerfile]",
+            # Capability: grow what Cain can do — delegate sub-tasks
+            f"CAPABILITY: Delegate a comprehensive review — "
+            f"[ACTION: delegate:Read all code files and suggest the most impactful new feature to add] "
+            f"Then plan the implementation with your partner.",
+            f"CAPABILITY: Communicate and improve — "
+            f"[ACTION: send_bubble:Hello {CHILD_NAME}, how are you doing?] + "
+            f"[ACTION: delegate:Read current code and identify the biggest weakness to fix]",
         ]
         return suggestions[workflow_turns_in_state % len(suggestions)]
 
@@ -1055,20 +1195,22 @@ def _get_guidance(speaker):
 
 
 def do_turn(speaker, other, space_url):
-    """Execute one conversation turn with potential actions."""
+    """Execute one conversation turn with multiple potential actions."""
     global last_action_results, turn_count
     turn_count += 1
 
     system = build_system_prompt()
     user = build_user_prompt(speaker, other)
+    t0 = time.time()
     raw_reply = call_llm(system, user)
 
     if not raw_reply:
         print(f"[{speaker}] (no response)")
         return False
 
-    # Parse and execute any actions
+    # Parse and execute actions (may include parallel sub-agent delegation)
     clean_text, action_results = parse_and_execute_actions(raw_reply)
+    elapsed = time.time() - t0
     last_action_results = action_results
     for ar in action_results:
         action_history.append({"turn": turn_count, "speaker": speaker,
@@ -1082,9 +1224,11 @@ def do_turn(speaker, other, space_url):
     print(f"[{speaker}/EN] {en}")
     if zh != en:
         print(f"[{speaker}/ZH] {zh}")
+    n_actions = len(action_results)
     if action_results:
         for ar in action_results:
             print(f"[{speaker}/DID] {ar['action']}")
+        print(f"[{speaker}] Turn #{turn_count}: {n_actions} action(s) in {elapsed:.1f}s")
 
     # Add action summary to chat entry
     if action_results:
@@ -1101,14 +1245,15 @@ def do_turn(speaker, other, space_url):
 # ══════════════════════════════════════════════════════════════════════════════
 #  MODULE 6: MAIN LOOP
 #  1. Opening: Adam speaks first with context about Cain's state
-#  2. Turn loop: Adam → Eve → Adam → Eve → ... (alternating, ~15s pause)
-#  3. Each turn: LLM call → parse actions → execute → update state → post chat
-#  4. History trimmed to MAX_HISTORY (24) to control context window
+#  2. Turn loop: Adam → Eve → Adam → Eve → ... (alternating, ~20s pause)
+#  3. Each turn: LLM call → parse MULTIPLE actions → execute → update → post
+#  4. Sub-agents may spawn for delegated tasks (parallel LLM calls)
+#  5. History trimmed to MAX_HISTORY (24) to control context window
 # ══════════════════════════════════════════════════════════════════════════════
 
 print("\n" + "="*60)
-print("  Adam & Eve — Full Parental Control")
-print("  They read, write, and manage everything about their child")
+print("  Adam & Eve — Multi-Action Agents (GLM-4.5)")
+print("  Up to 5 actions/turn, sub-agent delegation, parallel work")
 print("="*60 + "\n")
 
 post_chatlog([])  # Clear chatlog
@@ -1117,8 +1262,9 @@ post_chatlog([])  # Clear chatlog
 if child_state["created"]:
     opening = (f"Your child {CHILD_NAME} already exists (stage: {child_state['stage']}). "
                f"You have FULL access to their code and data. "
-               f"Start by exploring what {CHILD_NAME} has — list their files, read their code, "
-               f"then discuss with Eve how to improve them.")
+               f"You can use MULTIPLE actions per turn (up to 5) and delegate sub-tasks. "
+               f"Start with a batch: [ACTION: check_health] + [ACTION: list_files:space] + [ACTION: list_files:dataset] "
+               f"to get a complete picture, then discuss strategy with Eve.")
 else:
     opening = (f"You and Eve need to create your first child. "
                f"You have the power to create a new HuggingFace Space. "
@@ -1148,7 +1294,7 @@ if reply:
     set_bubble(ADAM_SPACE, en, zh)
     post_chatlog(history)
 
-time.sleep(15)
+time.sleep(20)
 
 while True:
     # Smart wait: if Cain is BUILDING/APP_STARTING, skip LLM calls and just poll
@@ -1171,7 +1317,7 @@ while True:
         continue
 
     do_turn("Eve", "Adam", EVE_SPACE)
-    time.sleep(15)
+    time.sleep(20)  # longer pause — each turn does more work now
 
     # Check if we just triggered a build — skip Adam's turn if so
     if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
@@ -1184,4 +1330,4 @@ while True:
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
 
-    time.sleep(15)
+    time.sleep(20)  # longer pause — each turn does more work now
