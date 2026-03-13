@@ -442,9 +442,30 @@ def parse_and_execute_actions(raw_text):
         key = f"write_file:{target}:{path}"
         if key not in executed:
             executed.add(key)
-            result = action_write_file(target, path, content)
-            results.append({"action": key, "result": result})
-            print(f"[ACTION] {key} → {result[:100]}")
+            # Guard: block write_file during BUILDING/APP_STARTING/RESTARTING
+            if target == "space" and child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
+                result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. "
+                          "Writing to Space during build RESETS the entire build from scratch. "
+                          "Wait for it to finish, then try again.")
+                results.append({"action": key, "result": result})
+                print(f"[BLOCKED] {key} — Cain is {child_state['stage']}")
+            # Guard: rebuild cooldown
+            elif target == "space" and last_rebuild_trigger_at > 0:
+                elapsed = time.time() - last_rebuild_trigger_at
+                if elapsed < REBUILD_COOLDOWN_SECS:
+                    remaining = int(REBUILD_COOLDOWN_SECS - elapsed)
+                    result = (f"⛔ BLOCKED: Rebuild cooldown active ({remaining}s remaining). "
+                              "Every write_file to Space triggers a full rebuild.")
+                    results.append({"action": key, "result": result})
+                    print(f"[BLOCKED] {key} — rebuild cooldown ({remaining}s remaining)")
+                else:
+                    result = action_write_file(target, path, content)
+                    results.append({"action": key, "result": result})
+                    print(f"[ACTION] {key} → {result[:100]}")
+            else:
+                result = action_write_file(target, path, content)
+                results.append({"action": key, "result": result})
+                print(f"[ACTION] {key} → {result[:100]}")
 
     # 2. Handle all [ACTION/Action/操作/动作: ...] tags — case-insensitive, multilingual
     for match in re.finditer(r'\[(?:ACTION|Action|action|操作|动作)\s*[:：]\s*([^\]]+)\]', raw_text):
@@ -468,10 +489,11 @@ def parse_and_execute_actions(raw_text):
         if len(results) >= 1:
             break
 
-        # Block restart/write when Cain is building — just wait
-        if child_state["stage"] in ("BUILDING", "RESTARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
+        # Block restart/write when Cain is building/starting — just wait
+        if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
             result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. "
-                      "Do NOT restart or make changes — wait for the build to finish. "
+                      "Do NOT restart or make changes — wait for it to finish starting. "
+                      "Every write_file during build RESETS the entire build from scratch. "
                       "Use [ACTION: check_health] to monitor progress.")
             results.append({"action": action_str, "result": result})
             print(f"[BLOCKED] {name} — Cain is {child_state['stage']}")
@@ -552,8 +574,8 @@ def parse_and_execute_actions(raw_text):
                 break
 
             # Apply same blocking rules
-            if child_state["stage"] in ("BUILDING", "RESTARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
-                result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. Wait for it to finish.")
+            if child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING") and name in ("restart", "write_file", "set_env", "set_secret"):
+                result = (f"⛔ BLOCKED: Cain is currently {child_state['stage']}. Wait for it to finish starting. Writing during build RESETS it.")
                 results.append({"action": action_str, "result": result})
                 print(f"[BLOCKED-emoji] {name} — Cain is {child_state['stage']}")
                 break
