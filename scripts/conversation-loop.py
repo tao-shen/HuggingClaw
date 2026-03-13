@@ -614,7 +614,7 @@ def parse_and_execute_actions(raw_text, depth=0):
                           "Use [ACTION: check_health] to monitor the current build.")
                 results.append({"action": action_str, "result": result})
                 print(f"[BLOCKED] {name} — rebuild cooldown ({remaining}s remaining)")
-                break
+                continue  # Don't kill remaining actions — reads/checks can still proceed
 
         # Block read-only actions based on workflow state
         if workflow_state == "ACT" and name in ("read_file", "list_files", "check_health"):
@@ -623,7 +623,7 @@ def parse_and_execute_actions(raw_text, depth=0):
                       "You already have enough information — make a change NOW.")
             results.append({"action": action_str, "result": result})
             print(f"[BLOCKED] {name} — forced ACT phase")
-            break
+            continue  # Don't kill remaining actions — writes after a blocked read should still execute
 
         # Block re-reading files already in knowledge base
         if name == "read_file" and len(args) >= 2:
@@ -634,7 +634,7 @@ def parse_and_execute_actions(raw_text, depth=0):
                           "If you need a different file, read a NEW one.")
                 results.append({"action": action_str, "result": result})
                 print(f"[BLOCKED] {name} — already read {file_key}")
-                break
+                continue  # Don't kill remaining actions — skip this read, execute the rest
 
         result = None
         if name == "create_child":
