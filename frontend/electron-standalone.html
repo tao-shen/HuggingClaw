@@ -1766,17 +1766,7 @@
     <div id="coords-overlay" style="display:none; position:fixed; pointer-events:none; background:rgba(0,0,0,0.85); color:#fff; font-family:ArkPixel,monospace; font-size:14px; padding:8px 12px; border-radius:4px; z-index:99999;">
         <div id="coords-display">X: 0 | Y: 0</div>
     </div>
-    <button id="coords-toggle" style="position:fixed; top:calc(env(safe-area-inset-top, 0px) + 12px); right:12px; z-index:999999; padding:8px 10px; font-family:ArkPixel,monospace; font-size:13px; cursor:pointer; border:2px solid #333; border-radius:5px; background:#333; color:#fff;">
-        显示坐标
-    </button>
-    <button id="pan-toggle" style="position:fixed; top:calc(env(safe-area-inset-top, 0px) + 12px); left:12px; z-index:999999; padding:8px 10px; font-family:ArkPixel,monospace; font-size:13px; cursor:pointer; border:2px solid #333; border-radius:5px; background:#333; color:#fff;">
-        移动视野
-    </button>
-    <div id="lang-toggle-group" style="position:fixed; top:calc(env(safe-area-inset-top, 0px) + 52px); left:12px; z-index:999999; display:flex; align-items:center;">
-        <button id="lang-btn-en" onclick="setUILanguage('en')" style="cursor:pointer;">EN</button>
-        <button id="lang-btn-jp" onclick="setUILanguage('ja')" style="cursor:pointer;">JP</button>
-        <button id="lang-btn-cn" onclick="setUILanguage('zh')" style="cursor:pointer;">CN</button>
-    </div>
+    <!-- coords-toggle, pan-toggle, lang-toggle-group removed -->
 
     <script src="/static/vendor/phaser-3.80.1.min.js"></script>
     <script>
@@ -4605,20 +4595,34 @@ function toggleBrokerPanel() {
                 ? (window.__demoVisitors.find(v => v.agentId === id) || window.__demoVisitors.find(v => v.name === (g.nameText && g.nameText.text)))
                 : null;
 
-            const statusThoughtsMap = {
-                idle: ['Standing by in the break room', 'Taking a breather before next task', 'Recharging in the rest area'],
-                writing: ['Working on tasks in the office', 'Organizing docs and executing', 'Focused in the work zone'],
-                researching: ['In research mode, gathering info', 'Looking up references and verifying', 'Researching, will share findings soon'],
-                executing: ['Executing, running the pipeline', 'Pushing tasks forward at the desk', 'Turning plans into action'],
-                syncing: ['Syncing, updating status soon', 'Syncing progress to system', 'Data sync in progress, hold on'],
-                error: ['In the bug zone, investigating', 'Anomaly detected, fixing now', 'Alert mode, locating the issue']
+            const statusThoughtsMapByLang = {
+                en: {
+                    idle: ['Standing by in the break room', 'Taking a breather before next task', 'Recharging in the rest area'],
+                    writing: ['Working on tasks in the office', 'Organizing docs and executing', 'Focused in the work zone'],
+                    researching: ['In research mode, gathering info', 'Looking up references and verifying', 'Researching, will share findings soon'],
+                    executing: ['Executing, running the pipeline', 'Pushing tasks forward at the desk', 'Turning plans into action'],
+                    syncing: ['Syncing, updating status soon', 'Syncing progress to system', 'Data sync in progress, hold on'],
+                    error: ['In the bug zone, investigating', 'Anomaly detected, fixing now', 'Alert mode, locating the issue']
+                },
+                zh: {
+                    idle: ['在休息区待命中', '稍微放松一下，等下一步任务', '休息充电中'],
+                    writing: ['在工作区处理任务', '正在整理文档', '工作区专注推进中'],
+                    researching: ['调研模式，搜集信息中', '正在查资料和验证', '研究中，稍后同步结论'],
+                    executing: ['执行中，正在跑流程', '在工作区推进任务', '正在把计划落地'],
+                    syncing: ['同步中，马上更新状态', '正在同步进度', '数据同步中请稍候'],
+                    error: ['在排查问题中', '检测到异常，正在修复', '报警中，先定位再处理']
+                }
             };
+            const statusThoughtsMap = statusThoughtsMapByLang[chatLang] || statusThoughtsMapByLang.en;
             const agentData = guestAgents.find(a => a.agentId === id) || {};
             const agentState = agentData.state || 'idle';
             const thoughts = statusThoughtsMap[agentState] || statusThoughtsMap.idle;
             // Priority: API bubbleText > demo bubbleText > random thoughts
-            const text = agentData.bubbleText
-                ? agentData.bubbleText
+            const apiBubble = agentData.bubbleText
+                ? (chatLang === 'zh' ? (agentData.bubbleTextZh || agentData.bubbleText) : agentData.bubbleText)
+                : null;
+            const text = apiBubble
+                ? apiBubble
                 : (demoVisitor && demoVisitor.bubbleText)
                     ? demoVisitor.bubbleText
                     : thoughts[Math.floor(Math.random() * thoughts.length)];
@@ -5518,13 +5522,20 @@ function toggleBrokerPanel() {
 
         let lastChatlogLen = 0;
         let chatLang = localStorage.getItem('chatLang') || 'en';
+        // Sync uiLang to chatLang on init (single language toggle now)
+        uiLang = chatLang;
         let chatlogCache = [];
         function setChatLang(lang) {
             chatLang = lang;
             localStorage.setItem('chatLang', lang);
+            // Sync uiLang so Star bubbles and i18n also switch
+            uiLang = lang;
+            localStorage.setItem('uiLang', lang);
             document.getElementById('chatlog-lang-en').style.opacity = lang === 'en' ? '1' : '0.4';
             document.getElementById('chatlog-lang-zh').style.opacity = lang === 'zh' ? '1' : '0.4';
             renderChatlog();
+            // Clear existing guest bubbles so they re-render in new language
+            Object.keys(guestBubbles).forEach(k => { if (guestBubbles[k]) { guestBubbles[k].destroy(); delete guestBubbles[k]; } });
         }
         function renderChatlog() {
             const el = document.getElementById('chatlog-content');
@@ -5796,7 +5807,7 @@ function toggleBrokerPanel() {
         }
 
         function getBubbleTextsByState(stateKey) {
-            const langPack = BUBBLE_TEXTS[uiLang] || BUBBLE_TEXTS.en;
+            const langPack = BUBBLE_TEXTS[chatLang] || BUBBLE_TEXTS.en;
             return langPack[stateKey] || langPack.idle || [];
         }
 
