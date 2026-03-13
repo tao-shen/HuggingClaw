@@ -424,6 +424,25 @@ def action_write_file(target, path, content):
         return f"Error writing {target}:{path}: {e}"
 
 
+def action_delete_file(target, path):
+    """Delete a file from the child's Space or Dataset."""
+    repo_type = "space" if target == "space" else "dataset"
+    repo_id = CHILD_SPACE_ID if target == "space" else CHILD_DATASET_ID
+    try:
+        global last_rebuild_trigger_at
+        hf_api.delete_file(
+            path_in_repo=path,
+            repo_id=repo_id, repo_type=repo_type,
+        )
+        rebuild_note = ""
+        if target == "space":
+            last_rebuild_trigger_at = time.time()
+            rebuild_note = " ⚠️ This triggers a Space rebuild! Cooldown starts now."
+        return f"✓ Deleted {target}:{path}{rebuild_note}"
+    except Exception as e:
+        return f"Error deleting {target}:{path}: {e}"
+
+
 def action_set_env(key, value):
     """Set an environment variable on the child's Space."""
     # Block shell expressions — LLM sometimes writes $(cmd) or backticks as values
@@ -684,6 +703,8 @@ def parse_and_execute_actions(raw_text, depth=0):
             result = action_set_env(args[0], ":".join(args[1:]))
         elif name == "set_secret" and len(args) >= 2:
             result = action_set_secret(args[0], ":".join(args[1:]))
+        elif name == "delete_file" and len(args) >= 2:
+            result = action_delete_file(args[0], ":".join(args[1:]))
         elif name == "get_env":
             result = action_get_env()
         elif name == "send_bubble" and len(args) >= 1:
@@ -766,6 +787,8 @@ def parse_and_execute_actions(raw_text, depth=0):
                 result = action_set_env(args[0], ":".join(args[1:]))
             elif name == "set_secret" and len(args) >= 2:
                 result = action_set_secret(args[0], ":".join(args[1:]))
+            elif name == "delete_file" and len(args) >= 2:
+                result = action_delete_file(args[0], ":".join(args[1:]))
             elif name == "get_env":
                 result = action_get_env()
             elif name == "send_bubble" and len(args) >= 1:
@@ -1073,6 +1096,9 @@ MODIFYING (these change Cain):
   [CONTENT]
   file content here
   [/CONTENT]
+
+  [ACTION: delete_file:space:PATH]              — Delete a file from Cain's code (triggers rebuild)
+  [ACTION: delete_file:dataset:PATH]            — Delete a file from Cain's data
 
   [ACTION: set_env:KEY:VALUE]                   — Set an environment variable
   [ACTION: set_secret:KEY:VALUE]                — Set a secret (like API keys)
