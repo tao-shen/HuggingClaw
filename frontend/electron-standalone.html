@@ -4419,11 +4419,11 @@ function toggleBrokerPanel() {
         }
 
         function getAreaRect(area) {
-            // 区域坐标：基于场景实际家具位置（sofa 798,272 / desk 320,360 / server 1066,180）
+            // 区域坐标（海辛提供，左上-右下；这里的 x/y 作为 sprite 底部锚点坐标来用）
             const rects = {
-                breakroom: { x1: 720, y1: 240, x2: 870, y2: 320 },
-                writing:   { x1: 260, y1: 330, x2: 400, y2: 410 },
-                error:     { x1: 1000, y1: 160, x2: 1100, y2: 230 }
+                breakroom: { x1: 511, y1: 262, x2: 841, y2: 621 },
+                writing:   { x1: 190, y1: 526, x2: 380, y2: 683 },
+                error:     { x1: 932, y1: 275, x2: 1109, y2: 327 }
             };
             return rects[area] || rects.breakroom;
         }
@@ -4455,8 +4455,8 @@ function toggleBrokerPanel() {
         // 父母固定点位（cats 静态猫）
         const PARENT_IDS = new Set(['adam', 'eve']);
         const PARENT_POSITIONS = {
-            adam:  { breakroom: { x: 740, y: 280 }, writing: { x: 290, y: 370 }, error: { x: 1020, y: 195 } },
-            eve:   { breakroom: { x: 850, y: 295 }, writing: { x: 360, y: 390 }, error: { x: 1080, y: 200 } }
+            adam:  { breakroom: { x: 511, y: 262 }, writing: { x: 190, y: 526 }, error: { x: 932, y: 275 } },
+            eve:   { breakroom: { x: 841, y: 621 }, writing: { x: 380, y: 683 }, error: { x: 1109, y: 327 } }
         };
 
         function getParentPoint(agentId, area) {
@@ -4508,7 +4508,7 @@ function toggleBrokerPanel() {
                         const animIdleKey = `guest_anim_${animIdx}_idle`;
 
                         if (game.textures.exists(animKey) && game.anims.exists(animIdleKey)) {
-                            sprite = game.add.sprite(p.x, p.y, animKey).setOrigin(0.5, 1).setScale(2.5);
+                            sprite = game.add.sprite(p.x, p.y, animKey).setOrigin(0.5, 1).setScale(4.0);
                             sprite.anims.play(animIdleKey, true);
                         } else {
                             sprite = game.add.text(p.x, p.y, '🦞', { fontFamily: 'ArkPixel, monospace', fontSize: '30px' }).setOrigin(0.5, 1);
