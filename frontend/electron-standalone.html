@@ -4482,21 +4482,20 @@ function toggleBrokerPanel() {
                         sprite = game.add.sprite(p.x, p.y, animKey, f).setOrigin(0.5, 1).setScale(1.1);
                         if (sprite.anims && sprite.anims.play) sprite.anims.play(animKey, true);
                     } else {
-                        // 非 demo 访客：使用 cats spritesheet 中的猫咪形象
-                        // Known agents get fixed cat frames; others hash to a frame
-                        const KNOWN_CAT_FRAMES = { 'adam': 1, 'eve': 3 };
+                        // 非 demo 访客：使用 guest_anim 动画精灵（32×32，8 帧 idle 动画）
+                        // 每个 agent 根据 ID hash 分配一个角色（1-6）
                         const aid = String(agent.agentId || '');
-                        let catFrame = KNOWN_CAT_FRAMES[aid.toLowerCase()];
-                        if (catFrame === undefined) {
-                            let hash = 0;
-                            for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
-                            catFrame = hash % 16;
-                        }
+                        let hash = 0;
+                        for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
+                        const animIdx = (hash % 6) + 1;
+                        const animKey = `guest_anim_${animIdx}`;
+                        const animIdleKey = `guest_anim_${animIdx}_idle`;
 
-                        if (game.textures.exists('cats')) {
-                            sprite = game.add.sprite(p.x, p.y, 'cats', catFrame).setOrigin(0.5, 1).setScale(0.6);
+                        if (game.textures.exists(animKey) && game.anims.exists(animIdleKey)) {
+                            sprite = game.add.sprite(p.x, p.y, animKey).setOrigin(0.5, 1).setScale(4.0);
+                            sprite.anims.play(animIdleKey, true);
                         } else {
-                            sprite = game.add.text(p.x, p.y, '🐱', { fontFamily: 'ArkPixel, monospace', fontSize: '30px' }).setOrigin(0.5, 1);
+                            sprite = game.add.text(p.x, p.y, '🦞', { fontFamily: 'ArkPixel, monospace', fontSize: '30px' }).setOrigin(0.5, 1);
                         }
                     }
                     sprite.setDepth(2600);

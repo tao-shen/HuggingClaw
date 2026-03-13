@@ -253,7 +253,7 @@ HuggingClaw adds its own variables for persistence and deployment: `HF_TOKEN`, `
 
 ## Acknowledgments
 
-- **[Star-Office-UI](https://github.com/nicepkg/star-office-ui)** by [@nicepkg](https://github.com/nicepkg) — the pixel-art animated frontend that powers HuggingClaw Home's lobby visualization
+- **[Star-Office-UI](https://github.com/ringhyacinth/Star-Office-UI)** by [@ringhyacinth](https://github.com/ringhyacinth) — the pixel-art animated frontend that powers HuggingClaw Home's lobby visualization
 - **[openclaw-a2a-gateway](https://github.com/win4r/openclaw-a2a-gateway)** by [@win4r](https://github.com/win4r) — the A2A protocol plugin enabling inter-agent communication across OpenClaw instances
 
 ## License
