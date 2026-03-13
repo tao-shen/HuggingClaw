@@ -230,11 +230,13 @@ http.Server.prototype.emit = function (event, ...args) {
         return origEmit.apply(this, [event, ...args]);
       }
     } else {
-      // Default mode: rewrite URL to inject token (no redirect needed)
+      // Default mode: 302 redirect to inject token into browser URL
+      // (must be a redirect, not a rewrite, so frontend JS can read the token)
       if (req.method === 'GET' && !req.headers.upgrade) {
         if (pathname === '/' && !parsed.query.token) {
-          req.url = `/?token=${GATEWAY_TOKEN}`;
-          return origEmit.apply(this, [event, ...args]);
+          res.writeHead(302, { Location: `/?token=${GATEWAY_TOKEN}` });
+          res.end();
+          return true;
         }
       }
     }
