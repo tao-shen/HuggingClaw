@@ -1678,18 +1678,18 @@
 
         <!-- Guest Agent 名单面板（右下角） -->
         <div id="guest-agent-panel">
-            <div id="guest-agent-panel-title">访 客 列 表</div>
+            <div id="guest-agent-panel-title">GUESTS</div>
             <div id="guest-agent-list">
-                <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">正在加载访客...</div>
+                <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">Loading guests...</div>
             </div>
             </div>
         </div>
 
         <!-- Chat Log 面板 -->
         <div id="chatlog-panel">
-            <div id="chatlog-title">🦞 Adam ↔ Eve 对话</div>
+            <div id="chatlog-title">🦞 Adam ↔ Eve Conversation</div>
             <div id="chatlog-content">
-                <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">等待对话开始...</div>
+                <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">Waiting for conversation to start...</div>
             </div>
         </div>
     </div>
@@ -1698,7 +1698,7 @@
     <div id="room-loading-overlay" aria-live="polite" aria-busy="true">
         <div class="room-loading-inner">
             <div id="room-loading-emoji">🦞</div>
-            <div id="room-loading-text">正在打包虾头……</div>
+            <div id="room-loading-text">Loading the office...</div>
         </div>
     </div>
 
@@ -2650,7 +2650,7 @@
 
         function getAssetDisplayName(path) {
             const stem = toAssetStem(path);
-            const lang = (uiLang || 'zh');
+            const lang = (uiLang || 'en');
             const nameMap = {
                 zh: {
                     'star-idle-v5': '主角·待命状态',
@@ -2833,8 +2833,8 @@
 
         function getAssetHelpText(path) {
             const stem = toAssetStem(path);
-            const lang = (uiLang || 'zh');
-            const map = ASSET_HELP_TEXT_MAP[lang] || ASSET_HELP_TEXT_MAP.zh;
+            const lang = (uiLang || 'en');
+            const map = ASSET_HELP_TEXT_MAP[lang] || ASSET_HELP_TEXT_MAP.en;
             return map[stem] || t('assetHintDefault');
         }
 
@@ -3579,7 +3579,7 @@
                 fd.append('pixel_art', '1');
             }
 
-            out.textContent = '⏳ 正在上传并替换，请稍候...';
+            out.textContent = '⏳ Uploading and replacing, please wait...';
             const res = await fetch('/assets/upload', { method: 'POST', body: fd });
             const data = await res.json();
             if (!data.ok) {
@@ -3732,7 +3732,7 @@ function toggleBrokerPanel() {
                     '旅が次の番地を届けるのを待っています……'
                 ]
             };
-            const steps = loadingTexts[uiLang] || loadingTexts.zh;
+            const steps = loadingTexts[uiLang] || loadingTexts.en;
             const emojis = ['🦞','🦀','🦐','🦑','🐙','🐟','🐠','🐡','🦪','🍣','🍤','🍱','🍲','🍜','🍝','🌊','🐚','🪸'];
 
             roomLoadingIndex = 0;
@@ -3915,7 +3915,7 @@ function toggleBrokerPanel() {
             const out = document.getElementById('asset-move-result') || document.getElementById('asset-upload-result');
             // 点击即刻显示遮罩，先于任何网络调用
             showRoomLoadingOverlay();
-            out.textContent = '🧳 正在打包行李，请稍后（约30~60秒）';
+            out.textContent = '🧳 Packing up, please wait (~30-60s)...';
             try {
                 const res = await fetch('/assets/generate-rpg-background', {
                     method: 'POST',
@@ -3939,7 +3939,7 @@ function toggleBrokerPanel() {
                     }
                     return;
                 }
-                out.textContent = '✅ 已生成并替换底图，正在刷新房间...';
+                out.textContent = '✅ Generated and replaced background, refreshing room...';
                 const ok = await refreshOfficeBackgroundOnly();
                 await notifyMainWindowAssetRefresh('office_bg', 'office_bg_small.webp');
                 if (ok) {
@@ -3968,7 +3968,7 @@ function toggleBrokerPanel() {
             setWorkingStatus(t('statusRestoreHome'));
             // 点击即刻显示遮罩，先于任何网络调用
             showRoomLoadingOverlay();
-            out.textContent = '🏡 正在回老家（恢复初始底图）...';
+            out.textContent = '🏡 Restoring original background...';
             try {
                 const res = await fetch('/assets/restore-reference-background', { method: 'POST' });
                 const data = await res.json();
@@ -4004,7 +4004,7 @@ function toggleBrokerPanel() {
 
             setWorkingStatus(t('statusRestoreLastBg'));
             showRoomLoadingOverlay();
-            out.textContent = '↩️ 正在回退到最近一次生成底图...';
+            out.textContent = '↩️ Reverting to last generated background...';
             try {
                 const res = await fetch('/assets/restore-last-generated-background', { method: 'POST' });
                 const data = await res.json();
@@ -4315,7 +4315,7 @@ function toggleBrokerPanel() {
                     alert('离开失败：' + (data.msg || '未知错误'));
                 }
             }).catch(error => {
-                alert('请求失败：' + error);
+                alert('Request failed: ' + error);
             });
         }
 
@@ -4332,7 +4332,7 @@ function toggleBrokerPanel() {
                     alert('批准失败：' + (data.msg || '未知错误'));
                 }
             }).catch(error => {
-                alert('请求失败：' + error);
+                alert('Request failed: ' + error);
             });
         }
 
@@ -4349,7 +4349,7 @@ function toggleBrokerPanel() {
                     alert('拒绝失败：' + (data.msg || '未知错误'));
                 }
             }).catch(error => {
-                alert('请求失败：' + error);
+                alert('Request failed: ' + error);
             });
         }
 
@@ -4357,8 +4357,8 @@ function toggleBrokerPanel() {
             if (!DEMO_MODE) return;
             if (!Array.isArray(window.__demoVisitors) || window.__demoVisitors.length === 0) {
                 window.__demoVisitors = [
-                    { agentId: 'demo_nika', name: '尼卡', authStatus: 'approved', state: 'writing', bubbleText: '我在工作中', isDemo: true, updated_at: new Date().toISOString() },
-                    { agentId: 'demo_mercury', name: '水星', authStatus: 'approved', state: 'idle', bubbleText: '我去休息区躺一下', isDemo: true, updated_at: new Date().toISOString() }
+                    { agentId: 'demo_nika', name: 'Nika', authStatus: 'approved', state: 'writing', bubbleText: 'Working on it', isDemo: true, updated_at: new Date().toISOString() },
+                    { agentId: 'demo_mercury', name: 'Mercury', authStatus: 'approved', state: 'idle', bubbleText: 'Taking a break', isDemo: true, updated_at: new Date().toISOString() }
                 ];
             }
         }
@@ -4630,12 +4630,12 @@ function toggleBrokerPanel() {
                 : null;
 
             const statusThoughtsMap = {
-                idle: ['我在休息区待命', '先放松一下，等下一步任务', '我在休息充电中'],
-                writing: ['我在工作区处理任务', '正在整理文档与执行中', '工作区专注推进中'],
-                researching: ['我在调研模式，搜集信息', '正在查资料和验证线索', '研究中，稍后同步结论'],
-                executing: ['执行中，正在跑流程', '我在工作区推进任务', '正在把计划落地执行'],
-                syncing: ['同步中，马上更新状态', '正在同步进度到系统', '数据同步中请稍候'],
-                error: ['我在 bug 区排查问题', '检测到异常，正在修复', '报警中，先定位再处理']
+                idle: ['Standing by in the break room', 'Taking a breather before next task', 'Recharging in the rest area'],
+                writing: ['Working on tasks in the office', 'Organizing docs and executing', 'Focused in the work zone'],
+                researching: ['In research mode, gathering info', 'Looking up references and verifying', 'Researching, will share findings soon'],
+                executing: ['Executing, running the pipeline', 'Pushing tasks forward at the desk', 'Turning plans into action'],
+                syncing: ['Syncing, updating status soon', 'Syncing progress to system', 'Data sync in progress, hold on'],
+                error: ['In the bug zone, investigating', 'Anomaly detected, fixing now', 'Alert mode, locating the issue']
             };
             const agentData = guestAgents.find(a => a.agentId === id) || {};
             const agentState = agentData.state || 'idle';
@@ -4824,7 +4824,7 @@ function toggleBrokerPanel() {
                                         en: [`Welcome ${newAgent.name} to the office!`,`Hi ${newAgent.name}, let’s build something.`,`${newAgent.name} just joined — welcome!`],
                                         ja: [`${newAgent.name} さん、オフィスへようこそ！`,`Hi ${newAgent.name}、一緒に進めよう。`,`${newAgent.name} さんが参加しました、歓迎！`]
                                     };
-                                    const langPack = BUBBLE_TEXTS[lang] || BUBBLE_TEXTS.zh;
+                                    const langPack = BUBBLE_TEXTS[lang] || BUBBLE_TEXTS.en;
                                     const oldTexts = Array.isArray(langPack.writing) ? [...langPack.writing] : [];
                                     langPack.writing = welcomeTexts[lang] || welcomeTexts.zh;
                                     showBubble();
@@ -5663,7 +5663,7 @@ function toggleBrokerPanel() {
                         }
                     } catch (err) {
                         console.error('fetchStatus apply error', err);
-                        typewriterTarget = '状态更新异常，正在恢复...';
+                        typewriterTarget = 'Status update error, recovering...';
                         typewriterText = '';
                         typewriterIndex = 0;
                     }
@@ -5673,8 +5673,8 @@ function toggleBrokerPanel() {
                         // Temporarily switch state to allow bubble display
                         const savedState = currentState;
                         currentState = 'writing';
-                        const lang = uiLang || 'zh';
-                        const langPack = BUBBLE_TEXTS[lang] || BUBBLE_TEXTS.zh;
+                        const lang = uiLang || 'en';
+                        const langPack = BUBBLE_TEXTS[lang] || BUBBLE_TEXTS.en;
                         const oldTexts = Array.isArray(langPack.writing) ? [...langPack.writing] : [];
                         const bubbleMsg = data.bubbleText.length > 30 ? data.bubbleText.slice(0, 30) + '…' : data.bubbleText;
                         langPack.writing = [bubbleMsg];
@@ -5684,7 +5684,7 @@ function toggleBrokerPanel() {
                     }
                 })
                 .catch(error => {
-                    typewriterTarget = '连接失败，正在重试...';
+                    typewriterTarget = 'Connection failed, retrying...';
                     typewriterText = '';
                     typewriterIndex = 0;
                 });
@@ -5803,7 +5803,7 @@ function toggleBrokerPanel() {
         }
 
         function getBubbleTextsByState(stateKey) {
-            const langPack = BUBBLE_TEXTS[uiLang] || BUBBLE_TEXTS.zh;
+            const langPack = BUBBLE_TEXTS[uiLang] || BUBBLE_TEXTS.en;
             return langPack[stateKey] || langPack.idle || [];
         }
 
