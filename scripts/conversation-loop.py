@@ -657,6 +657,10 @@ def call_llm(system_prompt, user_prompt):
     return ""
 
 
+def _has_chinese(s):
+    """Check if string contains Chinese characters."""
+    return bool(re.search(r'[\u4e00-\u9fff]', s))
+
 def parse_bilingual(text):
     """Parse bilingual response into (en, zh). Handle action tags gracefully."""
     # Remove action tags and content blocks for display
@@ -664,6 +668,7 @@ def parse_bilingual(text):
     display = re.sub(r'\[CONTENT\].*?\[/CONTENT\]', '', display, flags=re.DOTALL)
     display = display.strip()
 
+    # 1. Explicit --- separator
     if '\n---\n' in display:
         parts = display.split('\n---\n', 1)
         return parts[0].strip(), parts[1].strip()
@@ -672,6 +677,27 @@ def parse_bilingual(text):
         en, zh = parts[0].strip(), parts[1].strip()
         if en and zh:
             return en, zh
+
+    # 2. Fallback: split on double-newline between English and Chinese paragraphs
+    paragraphs = re.split(r'\n{2,}', display)
+    if len(paragraphs) >= 2:
+        # Find the split point: first paragraph with Chinese is the start of zh
+        en_parts = []
+        zh_parts = []
+        found_zh = False
+        for p in paragraphs:
+            p = p.strip()
+            if not p:
+                continue
+            if not found_zh and _has_chinese(p):
+                found_zh = True
+            if found_zh:
+                zh_parts.append(p)
+            else:
+                en_parts.append(p)
+        if en_parts and zh_parts:
+            return '\n\n'.join(en_parts), '\n\n'.join(zh_parts)
+
     return display, display
 
 
