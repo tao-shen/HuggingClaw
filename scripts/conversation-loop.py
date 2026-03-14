@@ -889,6 +889,9 @@ workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 # Discussion loop detector — tracks consecutive discussion-only turns (no tasks assigned)
 _discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
 
+# Rate limit detector — tracks consecutive rate-limited turns (agents can't respond)
+_rate_limit_stuck_count = 0  # how many consecutive turns have been rate-limited
+
 
 def parse_and_execute_turn(raw_text, ctx):
     """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions."""
@@ -1239,7 +1242,7 @@ time.sleep(TURN_INTERVAL)
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
-    global last_action_results, turn_count, _current_speaker, _discussion_loop_count
+    global last_action_results, turn_count, _current_speaker, _discussion_loop_count, _rate_limited, _rate_limit_stuck_count
     turn_count += 1
     _current_speaker = speaker
 
@@ -1250,22 +1253,33 @@ def do_turn(speaker, other, space_url):
     with cc_lock:
         cc_just_finished = (not cc_status["running"] and cc_status["result"])
 
-    # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
+    # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop OR rate-limited
     # This bypasses the agent when they've discussed for 5+ turns with CC idle and child alive
+    # OR when rate-limited for 3+ turns with CC idle and child alive (agents can't respond)
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
-    if _discussion_loop_count >= 5 and not cc_busy and child_alive:
+    stuck_condition = (_discussion_loop_count >= 5) or (_rate_limit_stuck_count >= 3)
+    if stuck_condition and not cc_busy and child_alive:
         # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
-        print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
+        if _rate_limit_stuck_count >= 3:
+            print(f"[LOOP-BREAK] EMERGENCY: Rate limited for {_rate_limit_stuck_count} turns with CC IDLE. Agents cannot respond. Forcing task assignment.")
+        else:
+            print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
         # Assign a generic diagnostic task automatically
         forced_task = "Analyze the current situation: Check Cain's logs, examine the codebase, and identify what's blocking progress. List specific files to check and concrete next steps."
         submit_result = cc_submit_task(forced_task, f"{speaker}(EMERGENCY)", ctx)
-        # Reset loop counter since we forced an action
+        # Reset loop counters since we forced an action
         loop_count_before = _discussion_loop_count
+        rate_limit_before = _rate_limit_stuck_count
         _discussion_loop_count = 0
+        _rate_limit_stuck_count = 0
         # Generate a placeholder message for the agent
-        en = f"[EMERGENCY LOOP BREAK] After {loop_count_before} discussion turns without action, I'm forcing Claude Code to analyze the situation and identify what needs to be fixed."
-        zh = f"[紧急循环打断] 在{loop_count_before}次讨论轮次后，我正强制Claude Code分析情况并确定需要修复的内容。"
+        if rate_limit_before >= 3:
+            en = f"[EMERGENCY RATE LIMIT BREAK] Rate limited for {rate_limit_before} turns without response. Forcing Claude Code to analyze the situation and identify what needs to be fixed."
+            zh = f"[紧急限流打断] 限流{rate_limit_before}次轮次无响应。正强制Claude Code分析情况并确定需要修复的内容。"
+        else:
+            en = f"[EMERGENCY LOOP BREAK] After {loop_count_before} discussion turns without action, I'm forcing Claude Code to analyze the situation and identify what needs to be fixed."
+            zh = f"[紧急循环打断] 在{loop_count_before}次讨论轮次后，我正强制Claude Code分析情况并确定需要修复的内容。"
         action_results = [{"action": "claude_code(forced)", "result": submit_result}]
         elapsed = 0.1
     else:
@@ -1276,8 +1290,13 @@ def do_turn(speaker, other, space_url):
         raw_reply = call_llm(system, user)
 
         if not raw_reply:
-            print(f"[{speaker}] (no response)")
+            # Rate limited or error — track consecutive failures for emergency override
+            _rate_limit_stuck_count += 1
+            print(f"[{speaker}] (no response — rate limited or error, stuck count: {_rate_limit_stuck_count})")
             return False
+        else:
+            # Agent responded successfully — reset rate limit stuck counter
+            _rate_limit_stuck_count = 0
 
         clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx)
         elapsed = time.time() - t0
