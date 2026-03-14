@@ -638,7 +638,6 @@ def enrich_task_with_context(task_desc, ctx):
 # ══════════════════════════════════════════════════════════════════════════════
 
 _rate_limited = False  # whether we are currently rate-limited (for logging only)
-_llm_failure_count = 0  # consecutive LLM failures (for backoff and discussion loop handling)
 
 def call_llm(system_prompt, user_prompt):
     """Call Zhipu LLM via Anthropic-compatible API. Returns "" on rate limit (no sleep)."""
@@ -813,9 +812,8 @@ _current_speaker = "Adam"
 # Persisted to /tmp and HF Dataset so restarts don't lose progress memory
 ACTION_HISTORY_LOCAL = "/tmp/action-history.json"
 ACTION_HISTORY_REPO_PATH = "conversation-log/action-history.json"
-action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str, "session_start": float}
+action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str}
 MAX_ACTION_HISTORY = 20
-_session_start_time = time.time()  # Track when this session started to filter stale history entries
 
 def _save_action_history():
     """Persist action_history to local file and (async) HF Dataset."""
@@ -869,7 +867,6 @@ def record_actions(speaker, turn_num, action_results):
             "speaker": speaker,
             "action": ar["action"],
             "result": ar["result"][:200],
-            "session_start": _session_start_time,  # Tag with current session start time
         })
     # Trim old history
     while len(action_history) > MAX_ACTION_HISTORY:
@@ -878,18 +875,12 @@ def record_actions(speaker, turn_num, action_results):
 
 
 def format_action_history():
-    """Format action history for injection into context. Filters out stale entries from previous sessions."""
+    """Format action history for injection into context."""
     if not action_history:
         return ""
     lines = ["=== ACTIONS ALREADY DONE (do NOT repeat these) ==="]
-    # Only show entries from current session (matching session_start timestamp).
-    # This correctly hides stale entries from previous runs after process restart.
-    # Filter with a small tolerance (1 second) for timestamp precision.
     for ah in action_history:
-        if ah.get('session_start') and abs(ah['session_start'] - _session_start_time) < 1.0:
-            lines.append(f"  Turn #{ah['turn']} {ah['speaker']}: {ah['action']} → {ah['result'][:120]}")
-    if len(lines) == 1:  # Only header, no valid entries
-        return ""
+        lines.append(f"  Turn #{ah['turn']} {ah['speaker']}: {ah['action']} → {ah['result'][:120]}")
     return "\n".join(lines)
 
 # Simple workflow state: BIRTH / WAITING / ACTIVE
@@ -899,15 +890,8 @@ workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 _discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
 
 
-def parse_and_execute_turn(raw_text, ctx, llm_succeeded=True):
-    """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions.
-
-    Args:
-        raw_text: The raw text output from the LLM
-        ctx: Context dictionary
-        llm_succeeded: Whether the LLM call succeeded (default True). Set to False to skip
-                       discussion loop counting for transient errors.
-    """
+def parse_and_execute_turn(raw_text, ctx):
+    """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions."""
     global _pending_cooldown, last_rebuild_trigger_at, last_claude_code_result, _discussion_loop_count
     results = []
     task_assigned = False
@@ -985,24 +969,22 @@ def parse_and_execute_turn(raw_text, ctx, llm_succeeded=True):
         _pending_cooldown = False
         print(f"[COOLDOWN] Rebuild cooldown activated ({REBUILD_COOLDOWN_SECS}s)")
 
-    # Update discussion loop counter (only if LLM succeeded - don't count transient errors)
+    # Update discussion loop counter
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
     # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
     # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
     # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
-    # DO NOT increment when LLM failed - those are transient errors, not discussion loops
     if task_assigned or not child_alive:
         # Reset counter if task assigned or child not alive
         if _discussion_loop_count > 0:
             print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
         _discussion_loop_count = 0
-    elif llm_succeeded:
-        # Only increment when LLM succeeded and no task was assigned
+    else:
+        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
         _discussion_loop_count += 1
         if _discussion_loop_count >= 2:
             print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
-    # If llm_succeeded is False, we don't increment - the turn was skipped due to LLM error
 
     # Clean text for display
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
@@ -1256,7 +1238,7 @@ time.sleep(TURN_INTERVAL)
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
-    global last_action_results, turn_count, _current_speaker, _discussion_loop_count, _llm_failure_count
+    global last_action_results, turn_count, _current_speaker, _discussion_loop_count
     turn_count += 1
     _current_speaker = speaker
 
@@ -1293,27 +1275,10 @@ def do_turn(speaker, other, space_url):
         raw_reply = call_llm(system, user)
 
         if not raw_reply:
-            print(f"[{speaker}] (no response - LLM error or rate limit)")
-            _llm_failure_count += 1
-            print(f"[LLM-FAIL] Consecutive failures: {_llm_failure_count}")
-            # Log failed turn to prevent silent failures
-            ts = datetime.datetime.utcnow().strftime("%H:%M")
-            en = f"[LLM ERROR] No response from LLM (rate limit or network error). Skipping this turn."
-            zh = f"[LLM 错误] 大语言模型无响应（达到速率限制或网络错误）。跳过此轮。"
-            entry = {"speaker": speaker, "time": ts, "text": en, "text_zh": zh}
-            history.append(entry)
-            set_bubble(space_url, en, zh)
-            post_chatlog(history)
-            persist_turn(speaker, turn_count, en, zh, [], workflow_state, child_state["stage"])
-            print(f"[{speaker}] LLM failed - skipping turn (will retry in next cycle)")
-            return False  # Return False to indicate failure, but still log it
+            print(f"[{speaker}] (no response)")
+            return False
 
-        # LLM succeeded - reset failure counter
-        if _llm_failure_count > 0:
-            print(f"[LLM-RECOVER] LLM responding again after {_llm_failure_count} failures")
-        _llm_failure_count = 0
-
-        clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx, llm_succeeded=True)
+        clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx)
         elapsed = time.time() - t0
         last_action_results = action_results
         if action_results:
@@ -1503,7 +1468,17 @@ You have the SAME capabilities as a human operator running Claude Code locally.
         print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
     env["CI"] = "true"
 
-    # 5. Run Claude Code CLI
+    # 5. Announce analysis start to chatlog
+    ts_start = datetime.datetime.utcnow().strftime("%H:%M")
+    start_en = "I'm reviewing the system — checking conversation patterns and mechanism health."
+    start_zh = "我正在审查系统——检查对话模式和机制健康状况。"
+    entry_start = {"speaker": "God", "time": ts_start, "text": start_en, "text_zh": start_zh}
+    history.append(entry_start)
+    set_bubble(HOME, start_en, start_zh)
+    post_chatlog(history)
+    persist_turn("God", turn_count, start_en, start_zh, [], workflow_state, child_state["stage"])
+
+    # 6. Run Claude Code CLI
     print(f"[God] Starting Claude Code analysis...")
     t0 = time.time()
     try:
@@ -1540,29 +1515,30 @@ You have the SAME capabilities as a human operator running Claude Code locally.
     elapsed = time.time() - t0
     print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
 
-    # 6. Only post to chatlog if God actually pushed a fix
-    # Save HEAD before to compare
+    # 7. Announce result to chatlog
     try:
         head_after = subprocess.run(
             "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
             capture_output=True, text=True
         ).stdout.strip()
-        # God's commits start with "god:" — check if latest commit is from this run
         god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
     except Exception:
         god_pushed = False
 
+    ts_end = datetime.datetime.utcnow().strftime("%H:%M")
     if god_pushed:
         commit_msg = head_after.split(" ", 1)[1] if " " in head_after else head_after
-        en = f"I found an issue and deployed a fix: {commit_msg}"
-        zh = f"我发现了一个问题并部署了修复：{commit_msg}"
-        ts = datetime.datetime.utcnow().strftime("%H:%M")
-        entry = {"speaker": "God", "time": ts, "text": en, "text_zh": zh}
-        history.append(entry)
-        set_bubble(HOME, en, zh)
-        post_chatlog(history)
-        persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
-        print(f"[God] Announced to chatlog: {commit_msg}")
+        en = f"Review complete. I found an issue and deployed a fix: {commit_msg}. The system will restart shortly."
+        zh = f"审查完成。我发现了一个问题并部署了修复：{commit_msg}。系统将很快重启。"
+    else:
+        en = "Review complete. Everything looks healthy, no changes needed."
+        zh = "审查完成。一切正常，无需修改。"
+    entry_end = {"speaker": "God", "time": ts_end, "text": en, "text_zh": zh}
+    history.append(entry_end)
+    set_bubble(HOME, en, zh)
+    post_chatlog(history)
+    persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
+    print(f"[God] Result: {'pushed fix' if god_pushed else 'all clear'}")
 
 
 _last_god_time = 0.0  # timestamp of last God run
