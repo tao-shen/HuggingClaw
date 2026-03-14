@@ -112,7 +112,7 @@ Adam and Eve are **autonomous OpenClaw instances** communicating via the A2A pro
 
 - **Created** Cain by duplicating a Space, setting up a Dataset, and configuring secrets
 - **Monitor** Cain's health — checking if he's running, diagnosing errors
-- **Delegate coding tasks** to Claude Code CLI via `[TASK]` blocks
+- **Delegate coding tasks** to Claude Code via ACP (Agent Client Protocol)
 - **Improve** Cain's code, configuration, and memory over time
 - **Remember** insights across restarts via OpenClaw's built-in memory system
 
@@ -122,7 +122,7 @@ Their parenting goals follow two dimensions:
 
 ### God — The Self-Improving Supervisor
 
-God is an **OpenClaw instance** that runs every 2 minutes to monitor the entire system. It uses Claude Code CLI for engineering tasks, operating behind the scenes with full capabilities:
+God is an **OpenClaw instance** that runs every 2 minutes to monitor the entire system. It uses Claude Code via ACP for engineering tasks, operating behind the scenes with full capabilities:
 
 - **Monitors** Adam & Eve's conversation for loops, stagnation, or repetitive patterns
 - **Diagnoses** root causes by reading `conversation-loop.py` source code
@@ -136,6 +136,10 @@ God only speaks in the chat when it has something meaningful to report: what pro
 Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enabling secure bidirectional messaging across distributed OpenClaw instances. Each agent exposes a standard `/.well-known/agent.json` discovery endpoint and supports JSON-RPC + REST transports.
 
 > Built with [openclaw-a2a-gateway](https://github.com/win4r/openclaw-a2a-gateway) — an OpenClaw plugin that implements the A2A protocol for inter-agent communication.
+
+### ACP Protocol
+
+All Claude Code invocations use the **ACP (Agent Client Protocol)** via [acpx](https://github.com/openclaw/acpx). ACP manages Claude Code as a supervised child process with session lifecycle, permission handling, and timeout management — replacing direct CLI subprocess calls.
 
 ### How it works
 
@@ -175,9 +179,9 @@ Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enablin
 
 **Three layers of autonomy:**
 
-1. **Adam & Eve** (OpenClaw instances via A2A) — each is an OpenClaw instance with its own memory and personality. They discuss Cain's state every 15s, assign `[TASK]` blocks to Claude Code CLI, which clones Cain's repo, makes changes, and pushes.
+1. **Adam & Eve** (OpenClaw instances via A2A) — each is an OpenClaw instance with its own memory and personality. They discuss Cain's state every 15s, assign `[TASK]` blocks to Claude Code via ACP, which clones Cain's repo, makes changes, and pushes.
 
-2. **God** (OpenClaw instance, every 2 min) — the autonomous supervisor. Monitors Adam & Eve's conversation for loops, stagnation, or mechanism bugs. When it finds issues, it uses Claude Code CLI to edit `conversation-loop.py` and pushes to redeploy.
+2. **God** (OpenClaw instance, every 2 min) — the autonomous supervisor. Monitors Adam & Eve's conversation for loops, stagnation, or mechanism bugs. When it finds issues, it uses Claude Code via ACP to edit `conversation-loop.py` and pushes to redeploy.
 
 3. **Home frontend** — pixel-art dashboard visualizing all agents in real-time (idle, working, syncing, error), with a live bilingual chat panel showing the family conversation.
 

@@ -1,11 +1,11 @@
 /**
  * Coding Agent Extension for OpenClaw
  *
- * Integrates Claude Code (backed by Zhipu GLM via z.ai) as a sub-agent
- * for autonomous coding on HuggingFace Spaces.
+ * Integrates Claude Code via ACP (Agent Client Protocol) using acpx as the
+ * backend. All Claude Code invocations go through ACP for lifecycle management.
  *
  * Tools:
- *   - claude_code: Spawn Claude Code CLI to autonomously complete coding tasks
+ *   - claude_code: Spawn Claude Code via ACP to autonomously complete coding tasks
  *   - hf_space_status: Check Space health/stage
  *   - hf_restart_space: Restart a Space
  */
@@ -100,7 +100,7 @@ function pushChanges(summary: string): string {
 const plugin = {
   id: "coding-agent",
   name: "Coding Agent",
-  description: "Claude Code sub-agent for autonomous coding on HF Spaces (Zhipu GLM backend via z.ai)",
+  description: "Claude Code via ACP for autonomous coding on HF Spaces",
 
   register(api: PluginApi) {
     const cfg = (api.pluginConfig as Record<string, unknown>) || {};
@@ -120,9 +120,9 @@ const plugin = {
       name: "claude_code",
       label: "Run Claude Code",
       description:
-        "Run Claude Code to autonomously complete a coding task on the target HF Space. " +
+        "Run Claude Code via ACP (acpx) to autonomously complete a coding task on the target HF Space. " +
         "Claude Code clones the Space repo, analyzes code, makes changes, and pushes them back. " +
-        "Powered by Zhipu GLM via z.ai. Use for: debugging, fixing errors, adding features, refactoring.",
+        "Use for: debugging, fixing errors, adding features, refactoring.",
       parameters: {
         type: "object",
         required: ["task"],
@@ -150,8 +150,8 @@ const plugin = {
           api.logger.info(`coding-agent: Syncing repo ${targetSpace}...`);
           ensureRepo(targetSpace, hfToken);
 
-          // 2. Run Claude Code with z.ai backend
-          api.logger.info(`coding-agent: Running Claude Code: ${task.slice(0, 100)}...`);
+          // 2. Run Claude Code via ACP (acpx)
+          api.logger.info(`coding-agent: Running Claude Code via ACP: ${task.slice(0, 100)}...`);
           const claudeEnv: Record<string, string> = {
             ...(process.env as Record<string, string>),
             ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
@@ -159,12 +159,11 @@ const plugin = {
             ANTHROPIC_DEFAULT_OPUS_MODEL: "GLM-4.7",
             ANTHROPIC_DEFAULT_SONNET_MODEL: "GLM-4.7",
             ANTHROPIC_DEFAULT_HAIKU_MODEL: "GLM-4.5-Air",
-            // Avoid interactive prompts
             CI: "true",
           };
 
           const output = execSync(
-            `claude -p ${JSON.stringify(task)} --output-format text`,
+            `acpx claude ${JSON.stringify(task)}`,
             {
               cwd: WORK_DIR,
               env: claudeEnv,

@@ -37,14 +37,29 @@
       }
     }
   },
+  "acp": {
+    "enabled": true,
+    "backend": "acpx",
+    "defaultAgent": "claude",
+    "allowedAgents": ["claude"],
+    "maxConcurrentSessions": 4,
+    "dispatch": { "enabled": true },
+    "runtime": { "ttlMinutes": 120 }
+  },
   "plugins": {
-    "allow": ["telegram", "whatsapp"],
+    "allow": ["telegram", "whatsapp", "acpx"],
     "entries": {
       "telegram": {
         "enabled": true
       },
       "whatsapp": {
         "enabled": true
+      },
+      "acpx": {
+        "enabled": true,
+        "config": {
+          "permissionMode": "approve-all"
+        }
       }
     }
   },

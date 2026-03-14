@@ -518,7 +518,7 @@ def action_claude_code(task):
         return "Failed to prepare workspace."
     _write_claude_md(CLAUDE_WORK_DIR, role="worker")
 
-    # 2. Run Claude Code with z.ai backend (Zhipu GLM)
+    # 2. Run Claude Code via ACP (acpx) with z.ai backend (Zhipu GLM)
     env = os.environ.copy()
     env.update({
         "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
@@ -529,10 +529,10 @@ def action_claude_code(task):
         "CI": "true",
     })
 
-    print(f"[CLAUDE-CODE] Running: {task[:200]}...")
+    print(f"[ACP/CLAUDE] Running via acpx: {task[:200]}...")
     try:
         proc = subprocess.Popen(
-            ["claude", "-p", task, "--output-format", "text", "--dangerously-skip-permissions"],
+            ["acpx", "claude", task],
             cwd=CLAUDE_WORK_DIR,
             env=env,
             stdout=subprocess.PIPE,
@@ -556,10 +556,10 @@ def action_claude_code(task):
         if not output.strip():
             output = "(no output)"
     except FileNotFoundError:
-        return "Claude Code CLI not found. Is @anthropic-ai/claude-code installed?"
+        return "acpx CLI not found. Is acpx@latest installed?"
     except Exception as e:
-        return f"Claude Code failed: {e}"
-    print(f"[CLAUDE-CODE] Done ({len(output)} chars, exit={proc.returncode})")
+        return f"ACP Claude Code failed: {e}"
+    print(f"[ACP/CLAUDE] Done ({len(output)} chars, exit={proc.returncode})")
 
     # 3. Push changes back to Cain's Space
     try:
@@ -1462,12 +1462,12 @@ def do_god_turn():
         print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
     env["CI"] = "true"
 
-    # 5. Run Claude Code CLI (no chatlog announcement — God only speaks when making changes)
-    print(f"[God] Starting Claude Code analysis...")
+    # 5. Run Claude Code via ACP (acpx) — God only speaks when making changes
+    print(f"[God] Starting ACP Claude Code analysis...")
     t0 = time.time()
     try:
         proc = subprocess.Popen(
-            ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"],
+            ["acpx", "claude", prompt],
             cwd=GOD_WORK_DIR,
             env=env,
             stdout=subprocess.PIPE,
@@ -1490,10 +1490,10 @@ def do_god_turn():
         if not output.strip():
             output = "(no output)"
     except FileNotFoundError:
-        output = "Claude Code CLI not found. Is @anthropic-ai/claude-code installed?"
-        print(f"[God] ERROR: Claude Code CLI not found")
+        output = "acpx CLI not found. Is acpx@latest installed?"
+        print(f"[God] ERROR: acpx CLI not found")
     except Exception as e:
-        output = f"God's Claude Code failed: {e}"
+        output = f"God's ACP Claude Code failed: {e}"
         print(f"[God] ERROR: {e}")
 
     elapsed = time.time() - t0

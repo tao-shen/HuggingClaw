@@ -21,10 +21,11 @@ RUN echo "[build] Installing system deps..." && START=$(date +%s) \
   && chown -R node:node /home/node \
   && echo "[build] System deps: $(($(date +%s) - START))s"
 
-# ── Claude Code CLI (for coding agent extension — uses z.ai/Zhipu GLM) ──────
-RUN echo "[build] Installing Claude Code CLI..." && START=$(date +%s) \
-  && npm install -g @anthropic-ai/claude-code \
-  && echo "[build] Claude Code CLI: $(($(date +%s) - START))s"
+# ── Claude Code CLI + ACP (acpx) ──────────────────────────────────────────────
+# Claude Code is the coding agent; acpx manages it via ACP (Agent Client Protocol)
+RUN echo "[build] Installing Claude Code CLI + acpx..." && START=$(date +%s) \
+  && npm install -g @anthropic-ai/claude-code acpx@latest \
+  && echo "[build] Claude Code + acpx: $(($(date +%s) - START))s"
 
 # ── Copy pre-built OpenClaw (skips clone + install + build entirely) ─────────
 COPY --from=openclaw-prebuilt --chown=node:node /app /app/openclaw
@@ -42,6 +43,11 @@ RUN echo "[build] Installing A2A gateway..." && START=$(date +%s) \
 
 # ── Coding Agent Extension (local — no git clone needed) ─────────────────────
 COPY --chown=node:node extensions/coding-agent /app/openclaw/extensions/coding-agent
+
+# ── Pre-configure acpx for non-interactive ACP sessions ───────────────────
+RUN mkdir -p /home/node/.acpx \
+  && echo '{"defaultAgent":"claude","defaultPermissions":"approve-all","format":"text"}' \
+     > /home/node/.acpx/config.json
 
 # ── Prepare runtime dirs ────────────────────────────────────────────────────
 RUN mkdir -p /app/openclaw/empty-bundled-plugins \

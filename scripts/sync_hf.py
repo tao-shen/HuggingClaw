@@ -508,12 +508,32 @@ class OpenClawFullSync:
             data.setdefault("models", {})["providers"] = providers
             data["agents"]["defaults"]["model"]["primary"] = OPENCLAW_DEFAULT_MODEL
 
+            # ── ACP (Agent Client Protocol) — native Claude Code integration ──
+            data["acp"] = {
+                "enabled": True,
+                "backend": "acpx",
+                "defaultAgent": "claude",
+                "allowedAgents": ["claude"],
+                "maxConcurrentSessions": 4,
+                "dispatch": {"enabled": True},
+                "runtime": {"ttlMinutes": 120}
+            }
+            print("[SYNC] ACP enabled: backend=acpx, agent=claude")
+
             # Plugin whitelist
             data.setdefault("plugins", {}).setdefault("entries", {})
-            plugin_allow = ["telegram", "whatsapp", "coding-agent"]
+            plugin_allow = ["telegram", "whatsapp", "coding-agent", "acpx"]
             if A2A_PEERS:
                 plugin_allow.append("a2a-gateway")
             data["plugins"]["allow"] = plugin_allow
+
+            # ── acpx Plugin Configuration (ACP backend) ──
+            data["plugins"]["entries"]["acpx"] = {
+                "enabled": True,
+                "config": {
+                    "permissionMode": "approve-all"
+                }
+            }
 
             # ── Coding Agent Plugin Configuration ──
             CODING_TARGET_SPACE = os.environ.get("CODING_AGENT_TARGET_SPACE", "")
