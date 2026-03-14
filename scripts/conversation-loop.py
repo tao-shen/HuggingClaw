@@ -638,6 +638,7 @@ def enrich_task_with_context(task_desc, ctx):
 # ══════════════════════════════════════════════════════════════════════════════
 
 _rate_limited = False  # whether we are currently rate-limited (for logging only)
+_llm_failure_count = 0  # consecutive LLM failures (for backoff and discussion loop handling)
 
 def call_llm(system_prompt, user_prompt):
     """Call Zhipu LLM via Anthropic-compatible API. Returns "" on rate limit (no sleep)."""
@@ -898,8 +899,15 @@ workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 _discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
 
 
-def parse_and_execute_turn(raw_text, ctx):
-    """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions."""
+def parse_and_execute_turn(raw_text, ctx, llm_succeeded=True):
+    """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions.
+
+    Args:
+        raw_text: The raw text output from the LLM
+        ctx: Context dictionary
+        llm_succeeded: Whether the LLM call succeeded (default True). Set to False to skip
+                       discussion loop counting for transient errors.
+    """
     global _pending_cooldown, last_rebuild_trigger_at, last_claude_code_result, _discussion_loop_count
     results = []
     task_assigned = False
@@ -977,22 +985,24 @@ def parse_and_execute_turn(raw_text, ctx):
         _pending_cooldown = False
         print(f"[COOLDOWN] Rebuild cooldown activated ({REBUILD_COOLDOWN_SECS}s)")
 
-    # Update discussion loop counter
+    # Update discussion loop counter (only if LLM succeeded - don't count transient errors)
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
     # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
     # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
     # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
+    # DO NOT increment when LLM failed - those are transient errors, not discussion loops
     if task_assigned or not child_alive:
         # Reset counter if task assigned or child not alive
         if _discussion_loop_count > 0:
             print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
         _discussion_loop_count = 0
-    else:
-        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
+    elif llm_succeeded:
+        # Only increment when LLM succeeded and no task was assigned
         _discussion_loop_count += 1
         if _discussion_loop_count >= 2:
             print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
+    # If llm_succeeded is False, we don't increment - the turn was skipped due to LLM error
 
     # Clean text for display
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
@@ -1246,7 +1256,7 @@ time.sleep(TURN_INTERVAL)
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
-    global last_action_results, turn_count, _current_speaker, _discussion_loop_count
+    global last_action_results, turn_count, _current_speaker, _discussion_loop_count, _llm_failure_count
     turn_count += 1
     _current_speaker = speaker
 
@@ -1283,10 +1293,27 @@ def do_turn(speaker, other, space_url):
         raw_reply = call_llm(system, user)
 
         if not raw_reply:
-            print(f"[{speaker}] (no response)")
-            return False
+            print(f"[{speaker}] (no response - LLM error or rate limit)")
+            _llm_failure_count += 1
+            print(f"[LLM-FAIL] Consecutive failures: {_llm_failure_count}")
+            # Log failed turn to prevent silent failures
+            ts = datetime.datetime.utcnow().strftime("%H:%M")
+            en = f"[LLM ERROR] No response from LLM (rate limit or network error). Skipping this turn."
+            zh = f"[LLM 错误] 大语言模型无响应（达到速率限制或网络错误）。跳过此轮。"
+            entry = {"speaker": speaker, "time": ts, "text": en, "text_zh": zh}
+            history.append(entry)
+            set_bubble(space_url, en, zh)
+            post_chatlog(history)
+            persist_turn(speaker, turn_count, en, zh, [], workflow_state, child_state["stage"])
+            print(f"[{speaker}] LLM failed - skipping turn (will retry in next cycle)")
+            return False  # Return False to indicate failure, but still log it
 
-        clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx)
+        # LLM succeeded - reset failure counter
+        if _llm_failure_count > 0:
+            print(f"[LLM-RECOVER] LLM responding again after {_llm_failure_count} failures")
+        _llm_failure_count = 0
+
+        clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx, llm_succeeded=True)
         elapsed = time.time() - t0
         last_action_results = action_results
         if action_results:
