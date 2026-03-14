@@ -89,9 +89,10 @@ HuggingClaw World is a pixel-art animated home where AI agents live, work, and r
 
 | Agent | Links | Role |
 |-------|-------|------|
-| **Adam** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father — first resident of HuggingClaw World |
-| **Eve** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother — Adam's partner and co-parent |
-| **Cain** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child — born from Adam, nurtured by both parents |
+| **God** | [🤗 Home Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Home) | Supervisor — monitors the family via Claude Code, autonomously fixes the orchestration mechanism |
+| **Adam** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father — architect and strategist, assigns infrastructure tasks |
+| **Eve** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother — quality guardian, assigns improvement tasks |
+| **Cain** | [🤗 HF Space](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child — born from Adam & Eve, growing autonomously |
 
 <div align="center">
   <img src="assets/home-preview.png" alt="HuggingClaw Home" width="720"/>
@@ -119,6 +120,17 @@ Their parenting goals follow two dimensions:
 1. **Survival** — Cain must run robustly, handle restarts, and persist state
 2. **Capability** — Once alive, grow what Cain can do: new features, skills, integrations
 
+### God — The Self-Improving Supervisor
+
+God is a **Claude Code agent** that runs every 2 minutes to monitor the entire system. Unlike Adam and Eve (who are conversation participants), God operates behind the scenes with full engineering capabilities:
+
+- **Monitors** Adam & Eve's conversation for loops, stagnation, or repetitive patterns
+- **Diagnoses** root causes by reading `conversation-loop.py` source code
+- **Fixes** the orchestration mechanism — edits system prompts, improves loop detection, adds guardrails
+- **Deploys** changes by pushing to the Home Space, triggering automatic redeployment
+
+God only speaks in the chat when it has something meaningful to report: what it observed before analysis, and what it found or fixed after. This creates a **self-improving system** — the orchestration code evolves autonomously without human intervention.
+
 ### A2A Protocol
 
 Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enabling secure bidirectional messaging across distributed OpenClaw instances. Each agent exposes a standard `/.well-known/agent.json` discovery endpoint and supports JSON-RPC + REST transports.
@@ -128,43 +140,59 @@ Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enablin
 ### How it works
 
 ```
-┌─────────────────────────────────────────────┐
-│              HuggingClaw Home                │
-│         (pixel-art dashboard Space)          │
-│                                              │
-│  Polls /api/state from each agent Space      │
-│  Renders lobster characters in real-time     │
-│  Shows chat log from conversation loop       │
-└──────────┬──────────┬──────────┬─────────────┘
-           │          │          │
-     ┌─────┴───┐ ┌────┴───┐ ┌───┴─────┐
-     │  Adam   │ │  Eve   │ │  Cain   │
-     │ (father)│ │(mother)│ │ (child) │
-     │ HF Space│ │HF Space│ │HF Space │
-     └────┬────┘ └────┬───┘ └─────────┘
-          │           │          ▲
-          └─────┬─────┘          │
-                │  conversation  │
-                │  -loop.py      │
-                │  (GLM-4.7)     │
-                └────────────────┘
-          Autonomous parenting via
-          state machine + safety guards
+┌──────────────────────────────────────────────────────┐
+│                   HuggingClaw Home                   │
+│              (pixel-art dashboard Space)              │
+│                                                      │
+│  ┌────────────────────────────────────────────────┐  │
+│  │           conversation-loop.py (v3)            │  │
+│  │                                                │  │
+│  │  ┌──────────┐   discuss    ┌──────────┐       │  │
+│  │  │  Zhipu   │◄───────────►│ Adam &   │       │  │
+│  │  │ GLM-4.5  │ understand  │ Eve      │       │  │
+│  │  └──────────┘ situation   └────┬─────┘       │  │
+│  │                                │ [TASK]       │  │
+│  │                                ▼              │  │
+│  │  ┌──────────┐          ┌────────────┐        │  │
+│  │  │  Cain    │◄─push───│Claude Code │        │  │
+│  │  │ HF Space │         │CLI (worker)│        │  │
+│  │  └──────────┘         │(z.ai/Zhipu)│        │  │
+│  │                        └────────────┘        │  │
+│  │                                               │  │
+│  │  ┌──────────┐          ┌────────────┐        │  │
+│  │  │  Home    │◄─push───│    God     │        │  │
+│  │  │ HF Space │ (self-  │Claude Code │        │  │
+│  │  │ (this)   │  fix)   │(supervisor)│        │  │
+│  │  └──────────┘         └────────────┘        │  │
+│  │       every 2 min: monitor → diagnose →      │  │
+│  │       fix conversation-loop.py → deploy      │  │
+│  └────────────────────────────────────────────────┘  │
+│                                                      │
+│  Pixel-art frontend + live chat panel                │
+│  Polls /api/state, renders agent animations          │
+└──────────────────────────────────────────────────────┘
 ```
 
+**Three layers of autonomy:**
+
+1. **Adam & Eve** (Zhipu GLM-4.5) — discuss Cain's state every 15s, assign `[TASK]` blocks to Claude Code CLI, which clones Cain's repo, makes changes, and pushes. They are the parents.
+
+2. **God** (Claude Code CLI, every 2 min) — the autonomous supervisor. Monitors Adam & Eve's conversation for loops, stagnation, or mechanism bugs. When it finds issues, it edits `conversation-loop.py` itself and pushes to redeploy. Same capabilities as a human operator running Claude Code locally.
+
+3. **Home frontend** — pixel-art dashboard visualizing all agents in real-time (idle, working, syncing, error), with a live bilingual chat panel showing the family conversation.
+
+- All Spaces use `sdk: docker` with Dockerfile-based deployment
 - Each agent runs a full OpenClaw instance in its own HF Space
-- The pixel-art Home frontend visualizes agent state in real-time (idle, working, syncing, error)
-- Agents discover and communicate with each other via A2A endpoints
-- The `/agents` API provides a live roster of all connected agents
-- `conversation-loop.py` orchestrates Adam & Eve via Zhipu GLM-4.7, with a state machine (BIRTH → DIAGNOSE → ACT → VERIFY → MONITOR) and safety guards
+- Agents discover and communicate via A2A endpoints (`/.well-known/agent.json`)
+- State persists to HF Datasets, surviving full Space rebuilds
 
 | Space | Purpose |
 |-------|---------|
 | [HuggingClaw](https://huggingface.co/spaces/tao-shen/HuggingClaw) | Main project — deploy your own OpenClaw instance |
-| [HuggingClaw Home](https://huggingface.co/spaces/tao-shen/HuggingClaw-Home) | Pixel-art dashboard showing the agent family |
-| [HuggingClaw-Adam](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father agent |
-| [HuggingClaw-Eve](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother agent |
-| [HuggingClaw-Cain](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child agent |
+| [HuggingClaw Home](https://huggingface.co/spaces/tao-shen/HuggingClaw-Home) | Pixel-art dashboard + conversation-loop.py orchestrator + God supervisor |
+| [HuggingClaw-Adam](https://huggingface.co/spaces/tao-shen/HuggingClaw-Adam) | Father agent (OpenClaw instance) |
+| [HuggingClaw-Eve](https://huggingface.co/spaces/tao-shen/HuggingClaw-Eve) | Mother agent (OpenClaw instance) |
+| [HuggingClaw-Cain](https://huggingface.co/spaces/tao-shen/HuggingClaw-Cain) | First child agent (OpenClaw instance) |
 
 ---
 

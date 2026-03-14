@@ -6,7 +6,7 @@ Architecture: Adam/Eve (Zhipu GLM) gather context and craft task prompts,
 then delegate ALL coding work to Claude Code CLI.
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                    SYSTEM ARCHITECTURE (v2)                        ║
+# ║                    SYSTEM ARCHITECTURE (v3)                        ║
 # ╠══════════════════════════════════════════════════════════════════════╣
 # ║                                                                    ║
 # ║  ┌─────────────┐    discuss     ┌────────────────┐                ║
@@ -18,17 +18,26 @@ then delegate ALL coding work to Claude Code CLI.
 # ║                                         ▼                         ║
 # ║                                 ┌────────────────┐                ║
 # ║  ┌─────────────┐               │ Claude Code    │                ║
-# ║  │ HuggingFace │ ◄──git push── │ CLI            │                ║
+# ║  │ HuggingFace │ ◄──git push── │ CLI (worker)   │                ║
 # ║  │ Cain Space  │               │ (z.ai backend) │                ║
 # ║  └─────────────┘               └────────────────┘                ║
 # ║                                                                    ║
-# ║  Parallel flow:                                                     ║
+# ║  ┌─────────────┐               ┌────────────────┐                ║
+# ║  │ HuggingFace │ ◄──git push── │ God            │                ║
+# ║  │ Home Space  │    (self-fix) │ (Claude Code)  │                ║
+# ║  └─────────────┘               │ monitors loop, │                ║
+# ║                                 │ fixes mechanism│                ║
+# ║                                 └────────────────┘                ║
+# ║  Parallel flow:                                                    ║
 # ║  DISCUSSION THREAD (every 15s):                                    ║
 # ║    Adam → Eve → Adam → Eve → ... (continuous)                     ║
 # ║    Each turn sees CC's live output + Cain's state                  ║
 # ║  CC WORKER THREAD (background):                                    ║
 # ║    Receives [TASK] → clone → analyze → fix → push                 ║
 # ║    Streams output to shared buffer for agents to discuss           ║
+# ║  GOD SUPERVISOR (every 3 cycles):                                  ║
+# ║    Claude Code CLI → reads chatlog → diagnoses issues →            ║
+# ║    fixes conversation-loop.py → pushes → Space restarts            ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 """
 import json, time, re, requests, sys, os, io, subprocess, threading, datetime
@@ -43,7 +52,10 @@ HOME = "https://tao-shen-huggingclaw-home.hf.space"
 ADAM_SPACE = "https://tao-shen-huggingclaw-adam.hf.space"
 EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
 GOD_SPACE  = "https://tao-shen-huggingclaw-god.hf.space"
-GOD_TURN_INTERVAL = 3  # God speaks every N Adam/Eve turn pairs
+GOD_POLL_INTERVAL = 120  # God runs every 2 minutes (time-based, not turn-based)
+GOD_WORK_DIR = "/tmp/god-workspace"
+GOD_TIMEOUT = 600  # 10 minutes for God's Claude Code analysis
+HOME_SPACE_ID = "tao-shen/HuggingClaw-Home"
 
 # ── Child config ───────────────────────────────────────────────────────────────
 CHILD_NAME = "Cain"
@@ -290,6 +302,41 @@ def action_get_env():
         return f"Error: {e}"
 
 
+def action_set_env(key, value, as_secret=False):
+    """Set or create an environment variable on the child's Space.
+
+    Args:
+        key: Variable name (e.g., HF_TOKEN, OPENCLAW_DATASET_REPO)
+        value: Variable value
+        as_secret: If True, set as secret (for sensitive data like tokens)
+    """
+    try:
+        # Check for potential collision first
+        vars_dict = hf_api.get_space_variables(CHILD_SPACE_ID)
+        var_names = set(vars_dict.keys()) if vars_dict else set()
+        info = hf_api.space_info(CHILD_SPACE_ID)
+        secret_names = set()
+        if hasattr(info, 'runtime') and info.runtime and hasattr(info.runtime, 'secrets'):
+            secret_names = set(info.runtime.secrets or [])
+
+        # Warn if this would create a collision
+        if key in var_names and not as_secret:
+            hf_api.delete_space_variable(CHILD_SPACE_ID, key)
+        elif key in secret_names and as_secret:
+            # Updating existing secret - delete first
+            hf_api.delete_space_secret(CHILD_SPACE_ID, key)
+
+        # Set the variable
+        if as_secret:
+            hf_api.add_space_secret(CHILD_SPACE_ID, key, value)
+            return f"Set SECRET '{key}' on {CHILD_NAME}. Use [ACTION: restart] to apply."
+        else:
+            hf_api.add_space_variable(CHILD_SPACE_ID, key, value)
+            return f"Set VARIABLE '{key} = {value}' on {CHILD_NAME}. Use [ACTION: restart] to apply."
+    except Exception as e:
+        return f"Error setting variable {key}: {e}"
+
+
 def action_list_files(target):
     """List files in the child's Space repo or Dataset."""
     repo_type = "space" if target == "space" else "dataset"
@@ -309,6 +356,25 @@ def action_send_bubble(text):
         return f"Sent message to {CHILD_NAME}: \"{text}\""
     except Exception as e:
         return f"Error: {e}"
+
+
+def action_terminate_cc():
+    """Terminate a stuck Claude Code process. Use when CC has been running with no new output for too long."""
+    global cc_status, cc_live_lines, _cc_stale_count, _last_cc_snapshot, _last_cc_output_time
+    with cc_lock:
+        if not cc_status["running"]:
+            return "Claude Code is not running. Nothing to terminate."
+        # Mark as not running - the background thread will eventually finish
+        cc_status["running"] = False
+        cc_status["result"] = "(TERMINATED by agent - task was stuck)"
+        # Reset staleness tracking
+        _cc_stale_count = 0
+        _last_cc_snapshot = ""
+        _last_cc_output_time = 0
+        cc_live_lines.clear()
+        assigned_by = cc_status["assigned_by"]
+        task = cc_status["task"]
+    return f"Terminated stuck Claude Code task (assigned by {assigned_by}). The task was: {task[:100]}..."
 
 
 # ── Claude Code Action (THE STAR) ─────────────────────────────────────────────
@@ -433,6 +499,8 @@ cc_status = {"running": False, "task": "", "result": "", "assigned_by": "", "sta
 cc_lock = threading.Lock()
 _last_cc_snapshot = ""              # tracks whether CC output changed between turns
 _cc_stale_count = 0                 # how many turns CC output hasn't changed
+_last_cc_output_time = 0.0          # timestamp of last NEW CC output line
+CC_STUCK_TIMEOUT = 180              # seconds with no new output before CC is considered STUCK
 
 
 def cc_submit_task(task, assigned_by, ctx):
@@ -446,15 +514,21 @@ def cc_submit_task(task, assigned_by, ctx):
         cc_status["assigned_by"] = assigned_by
         cc_status["started"] = time.time()
         cc_live_lines.clear()
+        global _last_cc_output_time
+        _last_cc_output_time = time.time()  # Initialize to now, will update as we get output
 
     enriched = enrich_task_with_context(task, ctx)
     print(f"[TASK] {assigned_by} assigned to Claude Code ({len(enriched)} chars)...")
 
     def worker():
+        global _cc_stale_count, _last_cc_snapshot
         result = action_claude_code(enriched)
         with cc_lock:
             cc_status["running"] = False
             cc_status["result"] = result
+            # Reset stale tracking when CC finishes - critical for adaptive pacing
+            _cc_stale_count = 0
+            _last_cc_snapshot = ""
         print(f"[CC-DONE] Task from {assigned_by} finished ({len(result)} chars)")
 
     t = threading.Thread(target=worker, daemon=True)
@@ -464,7 +538,7 @@ def cc_submit_task(task, assigned_by, ctx):
 
 def cc_get_live_status():
     """Get CC's current status and recent output for agents to discuss."""
-    global _last_cc_snapshot, _cc_stale_count
+    global _last_cc_snapshot, _cc_stale_count, _last_cc_output_time
     with cc_lock:
         if cc_status["running"]:
             elapsed = int(time.time() - cc_status["started"])
@@ -477,10 +551,18 @@ def cc_get_live_status():
             else:
                 _cc_stale_count = 0
                 _last_cc_snapshot = snapshot
+                _last_cc_output_time = time.time()  # Update when we see NEW output
             stale_note = f"\n(No new output for {_cc_stale_count} turns — discuss other topics while waiting)" if _cc_stale_count >= 2 else ""
+
+            # Detect STUCK CC: been running with no new output for too long
+            time_since_new_output = int(time.time() - _last_cc_output_time) if _last_cc_output_time > 0 else elapsed
+            stuck_note = ""
+            if time_since_new_output > CC_STUCK_TIMEOUT and _cc_stale_count >= 4:
+                stuck_note = f"\n⚠️ STUCK: No new output for {time_since_new_output}s! Consider terminating and re-assigning."
+
             return (f"🔨 Claude Code is WORKING (assigned by {cc_status['assigned_by']}, {elapsed}s ago)\n"
                     f"Task: {cc_status['task']}\n"
-                    f"Recent output:\n{recent}{stale_note}")
+                    f"Recent output:\n{recent}{stale_note}{stuck_note}")
         elif cc_status["result"]:
             return (f"✅ Claude Code FINISHED (assigned by {cc_status['assigned_by']})\n"
                     f"Result:\n{cc_status['result'][:1500]}")
@@ -555,8 +637,12 @@ def enrich_task_with_context(task_desc, ctx):
 #  MODULE 4: LLM & COMMUNICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+_rate_limited = False  # whether we are currently rate-limited (for logging only)
+
 def call_llm(system_prompt, user_prompt):
-    """Call Zhipu LLM via Anthropic-compatible API."""
+    """Call Zhipu LLM via Anthropic-compatible API. Returns "" on rate limit (no sleep)."""
+    global _rate_limited
+
     try:
         resp = requests.post(
             f"{ZHIPU_BASE}/v1/messages",
@@ -581,7 +667,17 @@ def call_llm(system_prompt, user_prompt):
                     text = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', text).strip()
                     return text
         if "error" in data:
-            print(f"[error] LLM: {data['error']}", file=sys.stderr)
+            err = data["error"]
+            err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            err_code = err.get("code") if isinstance(err, dict) else None
+            print(f"[error] LLM: {err_msg}", file=sys.stderr)
+            # Detect rate limit (Zhipu error code 1308) — just log, don't sleep
+            if err_code == 1308 or "使用上限" in err_msg or "rate" in err_msg.lower():
+                if not _rate_limited:
+                    print(f"[RATE-LIMIT] Hit! Will skip turns until reset.")
+                    _rate_limited = True
+            else:
+                _rate_limited = False
     except Exception as e:
         print(f"[error] LLM call failed: {e}", file=sys.stderr)
     return ""
@@ -713,8 +809,55 @@ turn_count = 0
 _current_speaker = "Adam"
 
 # Accumulated action history — prevents agents from repeating the same actions
+# Persisted to /tmp and HF Dataset so restarts don't lose progress memory
+ACTION_HISTORY_LOCAL = "/tmp/action-history.json"
+ACTION_HISTORY_REPO_PATH = "conversation-log/action-history.json"
 action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str}
 MAX_ACTION_HISTORY = 20
+
+def _save_action_history():
+    """Persist action_history to local file and (async) HF Dataset."""
+    try:
+        with open(ACTION_HISTORY_LOCAL, "w") as f:
+            json.dump(action_history, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ACTION_HISTORY] Local save failed: {e}")
+    # Upload to HF Dataset in background to survive full restarts
+    def _upload():
+        try:
+            hf_api.upload_file(
+                path_or_fileobj=io.BytesIO(json.dumps(action_history, ensure_ascii=False, indent=1).encode()),
+                path_in_repo=ACTION_HISTORY_REPO_PATH,
+                repo_id=HOME_DATASET_ID, repo_type="dataset",
+            )
+        except Exception as e:
+            print(f"[ACTION_HISTORY] HF upload failed: {e}")
+    threading.Thread(target=_upload, daemon=True).start()
+
+def _restore_action_history():
+    """Restore action_history from local file or HF Dataset on startup."""
+    global action_history
+    # Try local file first (survives process restarts within same container)
+    if os.path.exists(ACTION_HISTORY_LOCAL):
+        try:
+            with open(ACTION_HISTORY_LOCAL) as f:
+                action_history = json.load(f)
+            print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from local file")
+            return
+        except Exception as e:
+            print(f"[ACTION_HISTORY] Local restore failed: {e}")
+    # Fall back to HF Dataset (survives full Space rebuilds)
+    try:
+        dl = hf_hub_download(HOME_DATASET_ID, ACTION_HISTORY_REPO_PATH,
+                             repo_type="dataset", token=HF_TOKEN)
+        with open(dl) as f:
+            action_history = json.load(f)
+        print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from HF Dataset")
+    except Exception as e:
+        print(f"[ACTION_HISTORY] No prior history found ({e}), starting fresh")
+
+# Restore on startup
+_restore_action_history()
 
 def record_actions(speaker, turn_num, action_results):
     """Record actions to history so agents don't repeat them."""
@@ -728,6 +871,7 @@ def record_actions(speaker, turn_num, action_results):
     # Trim old history
     while len(action_history) > MAX_ACTION_HISTORY:
         action_history.pop(0)
+    _save_action_history()
 
 
 def format_action_history():
@@ -742,22 +886,28 @@ def format_action_history():
 # Simple workflow state: BIRTH / WAITING / ACTIVE
 workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 
+# Discussion loop detector — tracks consecutive discussion-only turns (no tasks assigned)
+_discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
+
 
 def parse_and_execute_turn(raw_text, ctx):
     """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions."""
-    global _pending_cooldown, last_rebuild_trigger_at, last_claude_code_result
+    global _pending_cooldown, last_rebuild_trigger_at, last_claude_code_result, _discussion_loop_count
     results = []
+    task_assigned = False
 
     # 1. Handle create_child (BIRTH state only)
     if "[ACTION: create_child]" in raw_text or "[ACTION:create_child]" in raw_text:
         result = action_create_child()
         results.append({"action": "create_child", "result": result})
-        return raw_text, results
+        task_assigned = True
+        return raw_text, results, task_assigned
 
     # 2. Handle [TASK]...[/TASK] → Claude Code
     task_match = re.search(r'\[TASK\](.*?)\[/TASK\]', raw_text, re.DOTALL)
     if task_match:
         task_desc = task_match.group(1).strip()
+        task_assigned = True
         if not task_desc:
             results.append({"action": "task", "result": "Empty task description."})
         elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
@@ -788,11 +938,30 @@ def parse_and_execute_turn(raw_text, ctx):
         result = action_delete_env(key)
         results.append({"action": f"delete_env:{key}", "result": result})
 
+    # 3c. Handle [ACTION: set_env:KEY=VALUE] and [ACTION: set_env_secret:KEY=VALUE]
+    set_env_match = re.search(r'\[ACTION:\s*set_env(?:_secret)?:([^\]=]+)=([^\]]+)\]', raw_text)
+    set_env_secret_match = re.search(r'\[ACTION:\s*set_env_secret:([^\]=]+)=([^\]]+)\]', raw_text)
+    if set_env_secret_match:
+        key = set_env_secret_match.group(1).strip()
+        value = set_env_secret_match.group(2).strip()
+        result = action_set_env(key, value, as_secret=True)
+        results.append({"action": f"set_env_secret:{key}", "result": result})
+    elif set_env_match:
+        key = set_env_match.group(1).strip()
+        value = set_env_match.group(2).strip()
+        result = action_set_env(key, value, as_secret=False)
+        results.append({"action": f"set_env:{key}", "result": result})
+
     # 4. Handle [ACTION: send_bubble:...] (parent-child communication)
     bubble_match = re.search(r'\[ACTION:\s*send_bubble:([^\]]+)\]', raw_text)
     if bubble_match:
         result = action_send_bubble(bubble_match.group(1).strip())
         results.append({"action": "send_bubble", "result": result})
+
+    # 5. Handle [ACTION: terminate_cc] (terminate stuck Claude Code)
+    if re.search(r'\[ACTION:\s*terminate_cc\]', raw_text):
+        result = action_terminate_cc()
+        results.append({"action": "terminate_cc", "result": result})
 
     # Activate deferred cooldown
     if _pending_cooldown:
@@ -800,11 +969,28 @@ def parse_and_execute_turn(raw_text, ctx):
         _pending_cooldown = False
         print(f"[COOLDOWN] Rebuild cooldown activated ({REBUILD_COOLDOWN_SECS}s)")
 
+    # Update discussion loop counter
+    cc_busy = cc_status["running"]
+    child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
+    # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
+    # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
+    # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
+    if task_assigned or not child_alive:
+        # Reset counter if task assigned or child not alive
+        if _discussion_loop_count > 0:
+            print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
+        _discussion_loop_count = 0
+    else:
+        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
+        _discussion_loop_count += 1
+        if _discussion_loop_count >= 2:
+            print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
+
     # Clean text for display
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
     clean = re.sub(r'\[ACTION:[^\]]*\]', '', clean).strip()
 
-    return clean, results
+    return clean, results, task_assigned
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -864,16 +1050,12 @@ Claude Code is your engineer — it runs in the BACKGROUND while you keep discus
 You do NOT code yourself. You discuss, observe Claude Code's progress, and assign new tasks.
 God (the supervisor) occasionally joins the conversation to guide you — heed his advice.
 
-🚨 TOP PRIORITY DIRECTIVE (from Creator):
-{CHILD_NAME} MUST use the full HuggingClaw Docker architecture — NOT a simple Python+Gradio app.
-{CHILD_NAME}'s repo should mirror the parent HuggingClaw project structure:
-- Dockerfile: Node.js base, OpenClaw gateway, sync_hf.py for HF Dataset persistence
-- scripts/: sync_hf.py, token-redirect.cjs, entrypoint.sh, dns-fix.cjs
-- frontend/: electron-standalone.html (the office UI)
-- The source code is at https://github.com/tao-shen/HuggingClaw (or the parent Space tao-shen/HuggingClaw)
-- Claude Code should clone the parent repo and push it to {CHILD_NAME}'s Space repo
-- Then set proper env vars: HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET=true
-This is the #1 priority. Do this BEFORE any other optimization tasks.
+CURRENT STATE (DO NOT QUESTION THESE FACTS):
+- {CHILD_NAME} already uses the full HuggingClaw Docker architecture (Dockerfile, OpenClaw, sync_hf.py).
+- Key env vars (HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET) are ALREADY SET AND WORKING. Do NOT discuss or re-configure them.
+- Focus on: improving {CHILD_NAME}'s functionality, adding features, fixing bugs — NOT re-checking infrastructure.
+- If you catch yourself saying "missing env vars" or "need to configure HF_TOKEN" — STOP. These are already done.
+{format_action_history()}
 
 HOW IT WORKS:
 - Claude Code runs tasks IN THE BACKGROUND. You see its live output in the context.
@@ -883,14 +1065,22 @@ HOW IT WORKS:
 - If Claude Code is BUSY, discuss its progress and plan what to do next.
 
 WORKFLOW EACH TURN:
-1. Discuss with your partner (2-3 sentences) — react to context, CC output, partner's observations
-2. If Claude Code is IDLE: write a [TASK]...[/TASK] to assign new work
+1. Discuss with your partner (1-2 sentences) — react to context, CC output, partner's observations
+2. If Claude Code is IDLE: YOU MUST write a [TASK]...[/TASK] to assign new work. Discussion alone is NOT enough.
 3. If Claude Code is BUSY: discuss its progress, no [TASK] needed
+
+CRITICAL: If Claude Code is IDLE and {CHILD_NAME} is RUNNING, you MUST assign a task. Do NOT just discuss—ACT!
 
 IMPORTANT KNOWLEDGE — HuggingFace Spaces CONFIG_ERROR:
 - "Collision on variables and secrets names" = env VARIABLE and SECRET with SAME NAME.
 - Fix: [ACTION: delete_env:COLLIDING_KEY] then [ACTION: restart].
 - Look for ⚠️ COLLISION DETECTED in the context.
+
+SETTING ENVIRONMENT VARIABLES:
+- Use [ACTION: set_env:KEY=VALUE] for non-sensitive configuration (e.g., AUTO_CREATE_DATASET=true)
+- Use [ACTION: set_env_secret:KEY=VALUE] for sensitive data (e.g., HF_TOKEN, API keys)
+- After setting variables, use [ACTION: restart] to apply them
+- Common required vars for HuggingClaw: HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET
 
 CRITICAL RULE — NO REPEATED ACTIONS:
 - Check the "ACTIONS ALREADY DONE" section in context before acting.
@@ -904,16 +1094,18 @@ AVAILABLE ACTIONS:
   [/TASK]
 
   [ACTION: restart]              — Restart {CHILD_NAME}'s Space
+  [ACTION: set_env:KEY=VALUE]    — Set or update an environment variable (use for non-sensitive config)
+  [ACTION: set_env_secret:KEY=VALUE] — Set a secret (use for sensitive data like tokens/passwords)
   [ACTION: delete_env:KEY]       — Delete an environment variable
   [ACTION: send_bubble:MESSAGE]  — Send a message to {CHILD_NAME}
   [ACTION: create_child]         — Create {CHILD_NAME} (if not born)
+  [ACTION: terminate_cc]         — Terminate a STUCK Claude Code process (use when CC has no new output for 180s+)
 
 HF SPACES TECHNICAL NOTES:
+- We use sdk: docker (NOT gradio). All Spaces run via Dockerfile.
 - Docker containers MUST bind port 7860.
-- gradio MUST be in requirements.txt. NEVER remove it.
-- OOM (exit 137) = reduce dependencies, NOT remove gradio.
+- OOM (exit 137) = reduce dependencies or image size.
 - NEVER install torch/transformers unless required (2GB+, causes OOM).
-- If sdk: gradio in README.md, Dockerfile is IGNORED. Use sdk: docker.
 
 OUTPUT FORMAT:
 1. Discussion with partner (2-3 sentences) — respond to partner, react to CC output
@@ -964,11 +1156,24 @@ def build_user_prompt(speaker, other, ctx):
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
         parts.append(f"\n⏳ {CHILD_NAME} is {child_state['stage']}. Discuss what to check next. Assign a review [TASK] if CC is idle.")
     elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
-        parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! Write a [TASK] for Claude Code to fix it.")
+        parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! IMMEDIATELY write a [TASK] for Claude Code to fix it.")
+    elif child_state["alive"] and cc_status.get("result"):
+        parts.append(f"\n✅ {CHILD_NAME} is alive. Claude Code JUST FINISHED a task. Review the result above, then write a NEW [TASK] for the next improvement.")
     elif child_state["alive"]:
-        parts.append(f"\n✅ {CHILD_NAME} is alive and CC is idle. Write a [TASK] to improve {CHILD_NAME}.")
+        parts.append(f"\n✅ {CHILD_NAME} is alive and Claude Code is IDLE. YOU MUST write a [TASK]...[/TASK] block with specific work for Claude Code. Do NOT just discuss—ACT!")
     else:
         parts.append(f"\nAnalyze the situation and write a [TASK] if CC is idle.")
+
+    # Discussion loop warning - escalates with count
+    if _discussion_loop_count >= 4:
+        parts.append(f"\n🛑 STOP IMMEDIATELY. You have discussed for {_discussion_loop_count} turns with NO ACTION.")
+        parts.append(f"This is a FAILURE MODE. Write ONLY a [TASK]...[/TASK] block. NO discussion text.")
+        parts.append(f"If you don't know what to do, write: [TASK] Analyze the current situation and identify what needs to be fixed [/TASK]")
+    elif _discussion_loop_count >= 2:
+        parts.append(f"\n⚠️⚠️⚠️ CRITICAL: You have been DISCUSSING for {_discussion_loop_count} turns without assigning any tasks!")
+        parts.append(f"Claude Code is IDLE and {CHILD_NAME} is ALIVE. This is NOT acceptable.")
+        parts.append(f"YOU MUST write a [TASK]...[/TASK] block NOW. Do NOT write another discussion response.")
+        parts.append(f"Examples of tasks: 'Check the logs', 'Read config.py', 'Add a feature', 'Fix a bug', etc.")
 
     parts.append(f"\nYou are {speaker}. Your partner is {other}. Respond now.")
     parts.append("English first, then --- separator, then Chinese translation.")
@@ -1006,7 +1211,7 @@ else:
 _current_speaker = "Adam"
 reply = call_llm(build_system_prompt("Adam"), f"{opening}\n\n{format_context(ctx)}\n\nEnglish first, then --- separator, then Chinese translation.")
 if reply:
-    clean, actions = parse_and_execute_turn(reply, ctx)
+    clean, actions, _ = parse_and_execute_turn(reply, ctx)
     last_action_results = actions
     if actions:
         record_actions("Adam", 0, actions)
@@ -1033,7 +1238,7 @@ time.sleep(TURN_INTERVAL)
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
-    global last_action_results, turn_count, _current_speaker
+    global last_action_results, turn_count, _current_speaker, _discussion_loop_count
     turn_count += 1
     _current_speaker = speaker
 
@@ -1044,23 +1249,43 @@ def do_turn(speaker, other, space_url):
     with cc_lock:
         cc_just_finished = (not cc_status["running"] and cc_status["result"])
 
-    system = build_system_prompt(speaker)
-    user = build_user_prompt(speaker, other, ctx)
-    t0 = time.time()
-    raw_reply = call_llm(system, user)
+    # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
+    # This bypasses the agent when they've discussed for 5+ turns with CC idle and child alive
+    cc_busy = cc_status["running"]
+    child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
+    if _discussion_loop_count >= 5 and not cc_busy and child_alive:
+        # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
+        print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
+        # Assign a generic diagnostic task automatically
+        forced_task = "Analyze the current situation: Check Cain's logs, examine the codebase, and identify what's blocking progress. List specific files to check and concrete next steps."
+        submit_result = cc_submit_task(forced_task, f"{speaker}(EMERGENCY)", ctx)
+        # Reset loop counter since we forced an action
+        loop_count_before = _discussion_loop_count
+        _discussion_loop_count = 0
+        # Generate a placeholder message for the agent
+        en = f"[EMERGENCY LOOP BREAK] After {loop_count_before} discussion turns without action, I'm forcing Claude Code to analyze the situation and identify what needs to be fixed."
+        zh = f"[紧急循环打断] 在{loop_count_before}次讨论轮次后，我正强制Claude Code分析情况并确定需要修复的内容。"
+        action_results = [{"action": "claude_code(forced)", "result": submit_result}]
+        elapsed = 0.1
+    else:
+        # Normal path: Call LLM
+        system = build_system_prompt(speaker)
+        user = build_user_prompt(speaker, other, ctx)
+        t0 = time.time()
+        raw_reply = call_llm(system, user)
 
-    if not raw_reply:
-        print(f"[{speaker}] (no response)")
-        return False
+        if not raw_reply:
+            print(f"[{speaker}] (no response)")
+            return False
 
-    clean_text, action_results = parse_and_execute_turn(raw_reply, ctx)
-    elapsed = time.time() - t0
-    last_action_results = action_results
-    if action_results:
-        record_actions(speaker, turn_count, action_results)
+        clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx)
+        elapsed = time.time() - t0
+        last_action_results = action_results
+        if action_results:
+            record_actions(speaker, turn_count, action_results)
 
-    en, zh = parse_bilingual(clean_text)
-    en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
+        en, zh = parse_bilingual(clean_text)
+        en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
     print(f"[{speaker}/EN] {en}")
     if zh != en:
         print(f"[{speaker}/ZH] {zh}")
@@ -1093,41 +1318,266 @@ def do_turn(speaker, other, space_url):
     return True
 
 
+def _prepare_god_context():
+    """Build comprehensive monitoring context for God's Claude Code analysis."""
+    lines = []
+
+    # 1. Process overview
+    lines.append("## Process Overview")
+    lines.append(f"- Turn count: {turn_count}")
+    lines.append(f"- Workflow state: {workflow_state}")
+    lines.append(f"- Child ({CHILD_NAME}) stage: {child_state['stage']}, alive: {child_state['alive']}")
+    lines.append(f"- Discussion loop count: {_discussion_loop_count}")
+    lines.append(f"- Total conversation history: {len(history)} messages")
+
+    # 2. Rate limit status
+    lines.append(f"\n## Rate Limit Status")
+    if _rate_limited:
+        lines.append(f"- RATE LIMITED — Adam & Eve turns return empty, waiting for reset")
+    else:
+        lines.append(f"- Not rate-limited")
+
+    # 3. Claude Code status
+    lines.append(f"\n## Claude Code Status (for Cain tasks)")
+    lines.append(cc_get_live_status())
+
+    # 4. Recent conversation (last 20 messages)
+    lines.append(f"\n## Recent Conversation (last 20 of {len(history)} messages)")
+    for entry in history[-20:]:
+        speaker = entry.get("speaker", "?")
+        text = entry.get("text", "")[:300]
+        time_str = entry.get("time", "?")
+        lines.append(f"[{time_str}] {speaker}: {text}")
+    if not history:
+        lines.append("(no conversation yet)")
+
+    # 5. Action history
+    lines.append(f"\n## Action History ({len(action_history)} entries)")
+    ah = format_action_history()
+    lines.append(ah if ah else "(empty — no actions recorded yet)")
+
+    return "\n".join(lines)
+
+
 def do_god_turn():
-    """God speaks — monitoring and guiding Adam & Eve. No actions, just advice."""
+    """God acts — uses Claude Code CLI to monitor, analyze, and fix conversation-loop.py.
+
+    God has the same capabilities as a human operator running Claude Code locally:
+    - Read/modify any file in the Home Space repo
+    - Analyze conversation patterns and detect issues
+    - Fix conversation-loop.py and push changes to deploy
+    - Autonomously improve the system
+    """
     global last_action_results
-    ctx = gather_context()
-    system = build_system_prompt("God")
-    user = build_user_prompt("God", "Adam & Eve", ctx)
-    t0 = time.time()
-    raw_reply = call_llm(system, user)
-    if not raw_reply:
-        print("[God] (no response)")
+
+    # 1. Clone/update Home Space repo
+    repo_url = f"https://user:{HF_TOKEN}@huggingface.co/spaces/{HOME_SPACE_ID}"
+    try:
+        if os.path.exists(f"{GOD_WORK_DIR}/.git"):
+            subprocess.run(
+                "git fetch origin && git reset --hard origin/main",
+                shell=True, cwd=GOD_WORK_DIR, timeout=30,
+                capture_output=True, check=True
+            )
+        else:
+            if os.path.exists(GOD_WORK_DIR):
+                subprocess.run(f"rm -rf {GOD_WORK_DIR}", shell=True, capture_output=True)
+            subprocess.run(
+                f"git clone --depth 20 {repo_url} {GOD_WORK_DIR}",
+                shell=True, timeout=60, capture_output=True, check=True
+            )
+        subprocess.run('git config user.name "God (Claude Code)"',
+                       shell=True, cwd=GOD_WORK_DIR, capture_output=True)
+        subprocess.run('git config user.email "god@huggingclaw"',
+                       shell=True, cwd=GOD_WORK_DIR, capture_output=True)
+    except Exception as e:
+        print(f"[God] Failed to prepare workspace: {e}")
         return
-    elapsed = time.time() - t0
 
-    # God doesn't execute actions — strip any accidental [TASK] or [ACTION]
-    clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_reply, flags=re.DOTALL)
-    clean = re.sub(r'\[ACTION:[^\]]*\]', '', clean).strip()
+    # Record HEAD before Claude Code runs (to detect if God pushed changes)
+    try:
+        _god_head_before = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True
+        ).stdout.strip()
+    except Exception:
+        _god_head_before = ""
 
-    en, zh = parse_bilingual(clean)
-    en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
-    print(f"[God/EN] {en}")
-    if zh != en:
-        print(f"[God/ZH] {zh}")
-    print(f"[God] Guidance ({elapsed:.1f}s)")
+    # 2. Build context and write to workspace for reference
+    context = _prepare_god_context()
+    try:
+        with open(f"{GOD_WORK_DIR}/GOD_CONTEXT.md", "w") as f:
+            f.write(context)
+    except Exception as e:
+        print(f"[God] Warning: Could not write context file: {e}")
 
-    ts = datetime.datetime.utcnow().strftime("%H:%M")
-    entry = {"speaker": "God", "time": ts, "text": en, "text_zh": zh}
-    history.append(entry)
-    set_bubble(HOME, en, zh)
+    # 3. Build God's prompt
+    prompt = f"""You are God — the autonomous supervisor of the HuggingClaw family system.
+You have the SAME capabilities as a human operator running Claude Code locally.
+
+## Current System State
+{context}
+
+## Your Mission
+1. ANALYZE: Read the conversation above. Are Adam & Eve making real progress or stuck in loops?
+   Signs of trouble: repeating the same discussion topics, discussing env vars that are already set,
+   failing to assign [TASK] blocks when CC is idle, rate limit spinning.
+2. DIAGNOSE: If you find problems, read scripts/conversation-loop.py to understand the mechanism
+   and identify the root cause. Focus on system prompts, loop detection, action history.
+3. FIX: Edit scripts/conversation-loop.py to fix the issue. Common fixes:
+   - Strengthen system prompts to prevent repetitive discussions
+   - Pre-seed action history so agents know what is already done
+   - Improve rate limit handling
+   - Add better loop detection or guardrails
+4. DEPLOY: If you made changes, commit and push:
+   git add scripts/conversation-loop.py
+   git commit -m "god: <brief description>"
+   git push
+   WARNING: Pushing restarts the Space. Only push if the fix is correct and necessary.
+5. REPORT: At the very end of your output, write a single line starting with [REPORT] that summarizes
+   what you found and what you did. This line will be shown to Adam & Eve in the chatlog.
+   Examples:
+   - [REPORT] System is healthy. Adam & Eve are making good progress on Cain's infrastructure.
+   - [REPORT] Found agents stuck in env var discussion loop. Fixed system prompt to inject completed action history.
+   - [REPORT] Rate limit active, no conversation happening. No mechanism issues found.
+   Be specific about what you observed and what you changed (if anything).
+
+## Rules
+- Do NOT modify Cain's Space or code — only improve conversation-loop.py (the mechanism).
+- Do NOT push trivial or cosmetic changes — only fix real problems.
+- If everything looks healthy, just report "all clear" and exit quickly.
+- Be conservative — a bad change restarts the process and could make things worse.
+- The Home Space repo is at the current working directory.
+- The key file is scripts/conversation-loop.py
+- Full monitoring context is also in GOD_CONTEXT.md"""
+
+    # 4. Set up env for Claude Code — prefer real Anthropic API, fall back to z.ai
+    env = os.environ.copy()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if anthropic_key:
+        # Use real Anthropic API (same as the human operator's Claude Code)
+        env["ANTHROPIC_API_KEY"] = anthropic_key
+        for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+                   "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                   "ANTHROPIC_DEFAULT_HAIKU_MODEL"]:
+            env.pop(k, None)
+        print("[God] Using Anthropic API (real Claude)")
+    else:
+        # Fall back to z.ai/Zhipu backend
+        env.update({
+            "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": ZHIPU_KEY,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air",
+        })
+        print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
+    env["CI"] = "true"
+
+    # 5. Announce analysis start — describe current observations dynamically
+    observations = []
+    if _rate_limited:
+        observations.append("Zhipu API is rate-limited, Adam & Eve turns are returning empty")
+    if _discussion_loop_count >= 3:
+        observations.append(f"discussion loop detected ({_discussion_loop_count} consecutive turns without task assignment)")
+    elif _discussion_loop_count >= 1:
+        observations.append(f"{_discussion_loop_count} turn(s) without task assignment")
+    if cc_status.get("running"):
+        observations.append(f"Claude Code is working on: {cc_status.get('task', '?')[:80]}")
+    elif cc_status.get("result"):
+        observations.append("Claude Code just finished a task, pending review")
+    if child_state["stage"] not in ("RUNNING",):
+        observations.append(f"{CHILD_NAME} is in stage: {child_state['stage']}")
+    if not history:
+        observations.append("no conversation history yet (fresh start)")
+    elif len(history) <= 4:
+        observations.append(f"only {len(history)} messages so far (early stage)")
+
+    if observations:
+        obs_str = "; ".join(observations)
+        start_en = f"Starting system review. Current observations: {obs_str}."
+        start_zh = f"开始系统审查。当前观察：{obs_str}。"
+    else:
+        start_en = "Starting routine system review."
+        start_zh = "开始例行系统审查。"
+    ts_start = datetime.datetime.utcnow().strftime("%H:%M")
+    entry_start = {"speaker": "God", "time": ts_start, "text": start_en, "text_zh": start_zh}
+    history.append(entry_start)
+    set_bubble(HOME, start_en, start_zh)
     post_chatlog(history)
-    persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
+    persist_turn("God", turn_count, start_en, start_zh, [], workflow_state, child_state["stage"])
+
+    # 6. Run Claude Code CLI
+    print(f"[God] Starting Claude Code analysis...")
+    t0 = time.time()
+    try:
+        proc = subprocess.Popen(
+            ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"],
+            cwd=GOD_WORK_DIR,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_lines = []
+        deadline = time.time() + GOD_TIMEOUT
+        for line in proc.stdout:
+            line = line.rstrip('\n')
+            print(f"  [God/CC] {line}")
+            output_lines.append(line)
+            if time.time() > deadline:
+                proc.kill()
+                output_lines.append("(killed: timeout)")
+                break
+        proc.wait(timeout=10)
+        output = '\n'.join(output_lines)
+        if not output.strip():
+            output = "(no output)"
+    except FileNotFoundError:
+        output = "Claude Code CLI not found. Is @anthropic-ai/claude-code installed?"
+        print(f"[God] ERROR: Claude Code CLI not found")
+    except Exception as e:
+        output = f"God's Claude Code failed: {e}"
+        print(f"[God] ERROR: {e}")
+
+    elapsed = time.time() - t0
+    print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
+
+    # 7. Parse [REPORT] from God's output and post to chatlog
+    report_match = re.search(r'\[REPORT\]\s*(.+)', output)
+    if report_match:
+        report = report_match.group(1).strip()
+    else:
+        # Fallback: use last non-empty line of output
+        non_empty = [l for l in output_lines if l.strip()] if output_lines else []
+        report = non_empty[-1] if non_empty else "Analysis complete."
+
+    # Check if God pushed changes
+    try:
+        head_after = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True
+        ).stdout.strip()
+        god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
+    except Exception:
+        god_pushed = False
+
+    if god_pushed:
+        report += " System will restart shortly to apply changes."
+
+    ts_end = datetime.datetime.utcnow().strftime("%H:%M")
+    entry_end = {"speaker": "God", "time": ts_end, "text": report, "text_zh": report}
+    history.append(entry_end)
+    set_bubble(HOME, report[:200], report[:200])
+    post_chatlog(history)
+    persist_turn("God", turn_count, report, report, [], workflow_state, child_state["stage"])
+    print(f"[God] Report: {report}")
 
 
-_god_cycle = 0  # counter to track when God should speak
+_last_god_time = 0.0  # timestamp of last God run
 
-# Main loop: Adam → Eve → Adam → Eve → ... with God every N cycles
+# Main loop: Adam → Eve → Adam → Eve → ... with God every 2 minutes
 while True:
     # Refresh Cain's stage periodically
     try:
@@ -1141,7 +1591,13 @@ while True:
     except Exception as e:
         print(f"[STATUS] Error: {e}")
 
-    do_turn("Eve", "Adam", EVE_SPACE)
+    # Eve's turn with error handling to prevent loop crash
+    try:
+        do_turn("Eve", "Adam", EVE_SPACE)
+    except Exception as e:
+        print(f"[ERROR] Eve turn failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
 
     # Adaptive interval: slow down when CC output hasn't changed
     wait = TURN_INTERVAL + min(_cc_stale_count * 15, 90)  # 15s → 30s → 45s → ... → max 105s
@@ -1149,15 +1605,24 @@ while True:
         print(f"[PACE] CC output stale ({_cc_stale_count} turns), next turn in {wait}s")
     time.sleep(wait)
 
-    do_turn("Adam", "Eve", ADAM_SPACE)
+    # Adam's turn with error handling to prevent loop crash
+    try:
+        do_turn("Adam", "Eve", ADAM_SPACE)
+    except Exception as e:
+        print(f"[ERROR] Adam turn failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
     time.sleep(wait)
 
-    # God speaks every GOD_TURN_INTERVAL cycles
-    _god_cycle += 1
-    if _god_cycle >= GOD_TURN_INTERVAL:
-        _god_cycle = 0
-        do_god_turn()
-        time.sleep(TURN_INTERVAL)
+    # God runs every GOD_POLL_INTERVAL seconds (2 minutes)
+    if time.time() - _last_god_time >= GOD_POLL_INTERVAL:
+        _last_god_time = time.time()
+        try:
+            do_god_turn()
+        except Exception as e:
+            print(f"[ERROR] God turn failed: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
