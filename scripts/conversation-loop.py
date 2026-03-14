@@ -812,8 +812,9 @@ _current_speaker = "Adam"
 # Persisted to /tmp and HF Dataset so restarts don't lose progress memory
 ACTION_HISTORY_LOCAL = "/tmp/action-history.json"
 ACTION_HISTORY_REPO_PATH = "conversation-log/action-history.json"
-action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str}
+action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str, "session_start": float}
 MAX_ACTION_HISTORY = 20
+_session_start_time = time.time()  # Track when this session started to filter stale history entries
 
 def _save_action_history():
     """Persist action_history to local file and (async) HF Dataset."""
@@ -867,6 +868,7 @@ def record_actions(speaker, turn_num, action_results):
             "speaker": speaker,
             "action": ar["action"],
             "result": ar["result"][:200],
+            "session_start": _session_start_time,  # Tag with current session start time
         })
     # Trim old history
     while len(action_history) > MAX_ACTION_HISTORY:
@@ -879,10 +881,11 @@ def format_action_history():
     if not action_history:
         return ""
     lines = ["=== ACTIONS ALREADY DONE (do NOT repeat these) ==="]
-    # Only show entries from current session (turn <= current turn count).
-    # This hides stale entries from previous runs after process restart.
+    # Only show entries from current session (matching session_start timestamp).
+    # This correctly hides stale entries from previous runs after process restart.
+    # Filter with a small tolerance (1 second) for timestamp precision.
     for ah in action_history:
-        if ah['turn'] <= turn_count:
+        if ah.get('session_start') and abs(ah['session_start'] - _session_start_time) < 1.0:
             lines.append(f"  Turn #{ah['turn']} {ah['speaker']}: {ah['action']} → {ah['result'][:120]}")
     if len(lines) == 1:  # Only header, no valid entries
         return ""
