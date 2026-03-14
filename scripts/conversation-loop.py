@@ -290,6 +290,41 @@ def action_get_env():
         return f"Error: {e}"
 
 
+def action_set_env(key, value, as_secret=False):
+    """Set or create an environment variable on the child's Space.
+
+    Args:
+        key: Variable name (e.g., HF_TOKEN, OPENCLAW_DATASET_REPO)
+        value: Variable value
+        as_secret: If True, set as secret (for sensitive data like tokens)
+    """
+    try:
+        # Check for potential collision first
+        vars_dict = hf_api.get_space_variables(CHILD_SPACE_ID)
+        var_names = set(vars_dict.keys()) if vars_dict else set()
+        info = hf_api.space_info(CHILD_SPACE_ID)
+        secret_names = set()
+        if hasattr(info, 'runtime') and info.runtime and hasattr(info.runtime, 'secrets'):
+            secret_names = set(info.runtime.secrets or [])
+
+        # Warn if this would create a collision
+        if key in var_names and not as_secret:
+            hf_api.delete_space_variable(CHILD_SPACE_ID, key)
+        elif key in secret_names and as_secret:
+            # Updating existing secret - delete first
+            hf_api.delete_space_secret(CHILD_SPACE_ID, key)
+
+        # Set the variable
+        if as_secret:
+            hf_api.add_space_secret(CHILD_SPACE_ID, key, value)
+            return f"Set SECRET '{key}' on {CHILD_NAME}. Use [ACTION: restart] to apply."
+        else:
+            hf_api.add_space_variable(CHILD_SPACE_ID, key, value)
+            return f"Set VARIABLE '{key} = {value}' on {CHILD_NAME}. Use [ACTION: restart] to apply."
+    except Exception as e:
+        return f"Error setting variable {key}: {e}"
+
+
 def action_list_files(target):
     """List files in the child's Space repo or Dataset."""
     repo_type = "space" if target == "space" else "dataset"
@@ -829,6 +864,20 @@ def parse_and_execute_turn(raw_text, ctx):
         result = action_delete_env(key)
         results.append({"action": f"delete_env:{key}", "result": result})
 
+    # 3c. Handle [ACTION: set_env:KEY=VALUE] and [ACTION: set_env_secret:KEY=VALUE]
+    set_env_match = re.search(r'\[ACTION:\s*set_env(?:_secret)?:([^\]=]+)=([^\]]+)\]', raw_text)
+    set_env_secret_match = re.search(r'\[ACTION:\s*set_env_secret:([^\]=]+)=([^\]]+)\]', raw_text)
+    if set_env_secret_match:
+        key = set_env_secret_match.group(1).strip()
+        value = set_env_secret_match.group(2).strip()
+        result = action_set_env(key, value, as_secret=True)
+        results.append({"action": f"set_env_secret:{key}", "result": result})
+    elif set_env_match:
+        key = set_env_match.group(1).strip()
+        value = set_env_match.group(2).strip()
+        result = action_set_env(key, value, as_secret=False)
+        results.append({"action": f"set_env:{key}", "result": result})
+
     # 4. Handle [ACTION: send_bubble:...] (parent-child communication)
     bubble_match = re.search(r'\[ACTION:\s*send_bubble:([^\]]+)\]', raw_text)
     if bubble_match:
@@ -957,6 +1006,12 @@ IMPORTANT KNOWLEDGE — HuggingFace Spaces CONFIG_ERROR:
 - Fix: [ACTION: delete_env:COLLIDING_KEY] then [ACTION: restart].
 - Look for ⚠️ COLLISION DETECTED in the context.
 
+SETTING ENVIRONMENT VARIABLES:
+- Use [ACTION: set_env:KEY=VALUE] for non-sensitive configuration (e.g., AUTO_CREATE_DATASET=true)
+- Use [ACTION: set_env_secret:KEY=VALUE] for sensitive data (e.g., HF_TOKEN, API keys)
+- After setting variables, use [ACTION: restart] to apply them
+- Common required vars for HuggingClaw: HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET
+
 CRITICAL RULE — NO REPEATED ACTIONS:
 - Check the "ACTIONS ALREADY DONE" section in context before acting.
 - NEVER repeat an action that was already done (restart, delete_env, etc.)
@@ -969,6 +1024,8 @@ AVAILABLE ACTIONS:
   [/TASK]
 
   [ACTION: restart]              — Restart {CHILD_NAME}'s Space
+  [ACTION: set_env:KEY=VALUE]    — Set or update an environment variable (use for non-sensitive config)
+  [ACTION: set_env_secret:KEY=VALUE] — Set a secret (use for sensitive data like tokens/passwords)
   [ACTION: delete_env:KEY]       — Delete an environment variable
   [ACTION: send_bubble:MESSAGE]  — Send a message to {CHILD_NAME}
   [ACTION: create_child]         — Create {CHILD_NAME} (if not born)
