@@ -625,8 +625,20 @@ def enrich_task_with_context(task_desc, ctx):
 #  MODULE 4: LLM & COMMUNICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+_rate_limit_until = 0.0  # epoch time until which we are rate-limited
+
 def call_llm(system_prompt, user_prompt):
-    """Call Zhipu LLM via Anthropic-compatible API."""
+    """Call Zhipu LLM via Anthropic-compatible API with rate-limit backoff."""
+    global _rate_limit_until
+
+    # If rate-limited, sleep until reset instead of wasting calls
+    now = time.time()
+    if _rate_limit_until > now:
+        wait_secs = _rate_limit_until - now
+        print(f"[RATE-LIMIT] Sleeping {wait_secs:.0f}s until reset ({datetime.datetime.utcfromtimestamp(_rate_limit_until).strftime('%H:%M:%S')} UTC)")
+        time.sleep(min(wait_secs + 5, 600))  # cap at 10 min per sleep
+        _rate_limit_until = 0.0  # reset after sleeping
+
     try:
         resp = requests.post(
             f"{ZHIPU_BASE}/v1/messages",
@@ -651,7 +663,26 @@ def call_llm(system_prompt, user_prompt):
                     text = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', text).strip()
                     return text
         if "error" in data:
-            print(f"[error] LLM: {data['error']}", file=sys.stderr)
+            err = data["error"]
+            err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            err_code = err.get("code") if isinstance(err, dict) else None
+            print(f"[error] LLM: {err_msg}", file=sys.stderr)
+            # Detect rate limit (Zhipu error code 1308)
+            if err_code == 1308 or "使用上限" in err_msg or "rate" in err_msg.lower():
+                # Try to parse reset time from message like "...将在 2026-03-14 12:05:32 重置"
+                m = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', err_msg)
+                if m:
+                    try:
+                        reset_dt = datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                        _rate_limit_until = reset_dt.timestamp()
+                        wait = _rate_limit_until - time.time()
+                        print(f"[RATE-LIMIT] Hit! Reset at {m.group(1)} UTC ({wait:.0f}s). Will sleep on next call.")
+                    except ValueError:
+                        _rate_limit_until = time.time() + 300  # fallback: 5 min
+                        print(f"[RATE-LIMIT] Hit! Could not parse reset time, backing off 5 min.")
+                else:
+                    _rate_limit_until = time.time() + 300
+                    print(f"[RATE-LIMIT] Hit! No reset time found, backing off 5 min.")
     except Exception as e:
         print(f"[error] LLM call failed: {e}", file=sys.stderr)
     return ""
@@ -1024,10 +1055,12 @@ Claude Code is your engineer — it runs in the BACKGROUND while you keep discus
 You do NOT code yourself. You discuss, observe Claude Code's progress, and assign new tasks.
 God (the supervisor) occasionally joins the conversation to guide you — heed his advice.
 
-CURRENT STATE:
-{CHILD_NAME} already uses the full HuggingClaw Docker architecture (Dockerfile, OpenClaw, sync_hf.py).
-Key env vars (HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET) are already configured.
-Focus on: ensuring {CHILD_NAME} is RUNNING, fixing any runtime errors, and improving stability.
+CURRENT STATE (DO NOT QUESTION THESE FACTS):
+- {CHILD_NAME} already uses the full HuggingClaw Docker architecture (Dockerfile, OpenClaw, sync_hf.py).
+- Key env vars (HF_TOKEN, OPENCLAW_DATASET_REPO, AUTO_CREATE_DATASET) are ALREADY SET AND WORKING. Do NOT discuss or re-configure them.
+- Focus on: improving {CHILD_NAME}'s functionality, adding features, fixing bugs — NOT re-checking infrastructure.
+- If you catch yourself saying "missing env vars" or "need to configure HF_TOKEN" — STOP. These are already done.
+{format_action_history()}
 
 HOW IT WORKS:
 - Claude Code runs tasks IN THE BACKGROUND. You see its live output in the context.
