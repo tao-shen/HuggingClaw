@@ -1236,7 +1236,13 @@ while True:
     except Exception as e:
         print(f"[STATUS] Error: {e}")
 
-    do_turn("Eve", "Adam", EVE_SPACE)
+    # Eve's turn with error handling to prevent loop crash
+    try:
+        do_turn("Eve", "Adam", EVE_SPACE)
+    except Exception as e:
+        print(f"[ERROR] Eve turn failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
 
     # Adaptive interval: slow down when CC output hasn't changed
     wait = TURN_INTERVAL + min(_cc_stale_count * 15, 90)  # 15s → 30s → 45s → ... → max 105s
@@ -1244,14 +1250,25 @@ while True:
         print(f"[PACE] CC output stale ({_cc_stale_count} turns), next turn in {wait}s")
     time.sleep(wait)
 
-    do_turn("Adam", "Eve", ADAM_SPACE)
+    # Adam's turn with error handling to prevent loop crash
+    try:
+        do_turn("Adam", "Eve", ADAM_SPACE)
+    except Exception as e:
+        print(f"[ERROR] Adam turn failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
     time.sleep(wait)
 
     # God speaks every GOD_TURN_INTERVAL cycles
     _god_cycle += 1
     if _god_cycle >= GOD_TURN_INTERVAL:
         _god_cycle = 0
-        do_god_turn()
+        try:
+            do_god_turn()
+        except Exception as e:
+            print(f"[ERROR] God turn failed: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
         time.sleep(TURN_INTERVAL)
 
     if len(history) > MAX_HISTORY:
