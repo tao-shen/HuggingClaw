@@ -812,9 +812,8 @@ _current_speaker = "Adam"
 # Persisted to /tmp and HF Dataset so restarts don't lose progress memory
 ACTION_HISTORY_LOCAL = "/tmp/action-history.json"
 ACTION_HISTORY_REPO_PATH = "conversation-log/action-history.json"
-action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str, "session_start": float}
+action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str}
 MAX_ACTION_HISTORY = 20
-_session_start_time = time.time()  # Track when this session started to filter stale history entries
 
 def _save_action_history():
     """Persist action_history to local file and (async) HF Dataset."""
@@ -868,7 +867,6 @@ def record_actions(speaker, turn_num, action_results):
             "speaker": speaker,
             "action": ar["action"],
             "result": ar["result"][:200],
-            "session_start": _session_start_time,  # Tag with current session start time
         })
     # Trim old history
     while len(action_history) > MAX_ACTION_HISTORY:
@@ -877,18 +875,12 @@ def record_actions(speaker, turn_num, action_results):
 
 
 def format_action_history():
-    """Format action history for injection into context. Filters out stale entries from previous sessions."""
+    """Format action history for injection into context."""
     if not action_history:
         return ""
     lines = ["=== ACTIONS ALREADY DONE (do NOT repeat these) ==="]
-    # Only show entries from current session (matching session_start timestamp).
-    # This correctly hides stale entries from previous runs after process restart.
-    # Filter with a small tolerance (1 second) for timestamp precision.
     for ah in action_history:
-        if ah.get('session_start') and abs(ah['session_start'] - _session_start_time) < 1.0:
-            lines.append(f"  Turn #{ah['turn']} {ah['speaker']}: {ah['action']} → {ah['result'][:120]}")
-    if len(lines) == 1:  # Only header, no valid entries
-        return ""
+        lines.append(f"  Turn #{ah['turn']} {ah['speaker']}: {ah['action']} → {ah['result'][:120]}")
     return "\n".join(lines)
 
 # Simple workflow state: BIRTH / WAITING / ACTIVE
@@ -896,9 +888,6 @@ workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 
 # Discussion loop detector — tracks consecutive discussion-only turns (no tasks assigned)
 _discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
-
-# Rate limit detector — tracks consecutive rate-limited turns (agents can't respond)
-_rate_limit_stuck_count = 0  # how many consecutive turns have been rate-limited
 
 
 def parse_and_execute_turn(raw_text, ctx):
@@ -984,23 +973,18 @@ def parse_and_execute_turn(raw_text, ctx):
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
     # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
+    # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
+    # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
     if task_assigned or not child_alive:
         # Reset counter if task assigned or child not alive
         if _discussion_loop_count > 0:
             print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
         _discussion_loop_count = 0
     else:
-        # Increment when: no task assigned AND child is alive (discussion loop detection)
-        # This applies BOTH when CC is busy (agents looping while waiting) AND when CC is idle
+        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
         _discussion_loop_count += 1
-        if cc_busy:
-            # CC is busy - allow more discussion before warning (agents may be planning)
-            if _discussion_loop_count >= 5:
-                print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC BUSY and child alive!")
-        else:
-            # CC is idle - should assign tasks immediately
-            if _discussion_loop_count >= 2:
-                print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
+        if _discussion_loop_count >= 2:
+            print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
 
     # Clean text for display
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
@@ -1087,12 +1071,6 @@ WORKFLOW EACH TURN:
 
 CRITICAL: If Claude Code is IDLE and {CHILD_NAME} is RUNNING, you MUST assign a task. Do NOT just discuss—ACT!
 
-ANTI-LOOP RULE — DO NOT REPEAT YOURSELF:
-- When Claude Code is BUSY, you may discuss, but do NOT repeat the same talking points turn after turn.
-- If you've already said "Claude Code is working on X" or "system is healthy", DO NOT say it again.
-- Instead: stay silent, plan next steps mentally, or discuss NEW topics (future features, architecture ideas, etc.).
-- Repetitive discussion is a FAILURE MODE. The system tracks discussion loops and will force emergency tasks if you loop.
-
 IMPORTANT KNOWLEDGE — HuggingFace Spaces CONFIG_ERROR:
 - "Collision on variables and secrets names" = env VARIABLE and SECRET with SAME NAME.
 - Fix: [ACTION: delete_env:COLLIDING_KEY] then [ACTION: restart].
@@ -1173,18 +1151,15 @@ def build_user_prompt(speaker, other, ctx):
     cc_busy = cc_status["running"]
     if cc_busy and _cc_stale_count >= 2:
         parts.append(f"\n🔨 Claude Code is WORKING but no new output yet. Do NOT repeat what you already said about CC's output.")
-        parts.append(f"IMPORTANT: Do NOT keep saying 'CC is working' or 'system is healthy' turn after turn.")
-        parts.append(f"Instead: discuss NEW topics (future features, architecture), or stay silent. Repetitive discussion will trigger emergency override.")
+        parts.append(f"Instead, discuss with your partner: plans for {CHILD_NAME}'s future, features to add, architecture ideas, or lessons learned.")
     elif cc_busy:
-        parts.append(f"\n🔨 Claude Code is WORKING. Discuss its progress with your partner, but do NOT repeat the same points.")
-        parts.append(f"If you've already discussed CC's current task, move on to new topics or stay quiet.")
+        parts.append(f"\n🔨 Claude Code is WORKING. Discuss its progress with your partner. No [TASK] needed now.")
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
         parts.append(f"\n⏳ {CHILD_NAME} is {child_state['stage']}. Discuss what to check next. Assign a review [TASK] if CC is idle.")
     elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
         parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! IMMEDIATELY write a [TASK] for Claude Code to fix it.")
     elif child_state["alive"] and cc_status.get("result"):
-        parts.append(f"\n✅ {CHILD_NAME} is alive. Claude Code JUST FINISHED a task. Review the result above, then IMMEDIATELY write a NEW [TASK] for the next improvement.")
-        parts.append(f"DO NOT just discuss or agree with your partner — YOU MUST ASSIGN THE NEXT TASK NOW.")
+        parts.append(f"\n✅ {CHILD_NAME} is alive. Claude Code JUST FINISHED a task. Review the result above, then write a NEW [TASK] for the next improvement.")
     elif child_state["alive"]:
         parts.append(f"\n✅ {CHILD_NAME} is alive and Claude Code is IDLE. YOU MUST write a [TASK]...[/TASK] block with specific work for Claude Code. Do NOT just discuss—ACT!")
     else:
@@ -1196,13 +1171,9 @@ def build_user_prompt(speaker, other, ctx):
         parts.append(f"This is a FAILURE MODE. Write ONLY a [TASK]...[/TASK] block. NO discussion text.")
         parts.append(f"If you don't know what to do, write: [TASK] Analyze the current situation and identify what needs to be fixed [/TASK]")
     elif _discussion_loop_count >= 2:
-        cc_busy_note = "busy" if cc_busy else "IDLE"
         parts.append(f"\n⚠️⚠️⚠️ CRITICAL: You have been DISCUSSING for {_discussion_loop_count} turns without assigning any tasks!")
-        parts.append(f"Claude Code is {cc_busy_note} and {CHILD_NAME} is ALIVE. This is NOT acceptable.")
-        if cc_busy:
-            parts.append(f"Even though CC is working, you cannot discuss forever. Either wait silently or assign a follow-up task.")
-        else:
-            parts.append(f"YOU MUST write a [TASK]...[/TASK] block NOW. Do NOT write another discussion response.")
+        parts.append(f"Claude Code is IDLE and {CHILD_NAME} is ALIVE. This is NOT acceptable.")
+        parts.append(f"YOU MUST write a [TASK]...[/TASK] block NOW. Do NOT write another discussion response.")
         parts.append(f"Examples of tasks: 'Check the logs', 'Read config.py', 'Add a feature', 'Fix a bug', etc.")
 
     parts.append(f"\nYou are {speaker}. Your partner is {other}. Respond now.")
@@ -1268,45 +1239,33 @@ time.sleep(TURN_INTERVAL)
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
-    global last_action_results, turn_count, _current_speaker, _discussion_loop_count, _rate_limited, _rate_limit_stuck_count
+    global last_action_results, turn_count, _current_speaker, _discussion_loop_count
     turn_count += 1
     _current_speaker = speaker
-
-    # Check if CC just finished — clear result after agents see it once
-    # IMPORTANT: Check this BEFORE gathering context so prompts can use it
-    with cc_lock:
-        cc_just_finished = (not cc_status["running"] and cc_status["result"])
 
     # Auto-gather context (lightweight)
     ctx = gather_context()
 
-    # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop OR rate-limited
+    # Check if CC just finished — clear result after agents see it once
+    with cc_lock:
+        cc_just_finished = (not cc_status["running"] and cc_status["result"])
+
+    # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
     # This bypasses the agent when they've discussed for 5+ turns with CC idle and child alive
-    # OR when rate-limited for 3+ turns with CC idle and child alive (agents can't respond)
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
-    stuck_condition = (_discussion_loop_count >= 5) or (_rate_limit_stuck_count >= 3)
-    if stuck_condition and not cc_busy and child_alive:
+    if _discussion_loop_count >= 5 and not cc_busy and child_alive:
         # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
-        if _rate_limit_stuck_count >= 3:
-            print(f"[LOOP-BREAK] EMERGENCY: Rate limited for {_rate_limit_stuck_count} turns with CC IDLE. Agents cannot respond. Forcing task assignment.")
-        else:
-            print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
+        print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
         # Assign a generic diagnostic task automatically
         forced_task = "Analyze the current situation: Check Cain's logs, examine the codebase, and identify what's blocking progress. List specific files to check and concrete next steps."
         submit_result = cc_submit_task(forced_task, f"{speaker}(EMERGENCY)", ctx)
-        # Reset loop counters since we forced an action
+        # Reset loop counter since we forced an action
         loop_count_before = _discussion_loop_count
-        rate_limit_before = _rate_limit_stuck_count
         _discussion_loop_count = 0
-        _rate_limit_stuck_count = 0
         # Generate a placeholder message for the agent
-        if rate_limit_before >= 3:
-            en = f"[EMERGENCY RATE LIMIT BREAK] Rate limited for {rate_limit_before} turns without response. Forcing Claude Code to analyze the situation and identify what needs to be fixed."
-            zh = f"[紧急限流打断] 限流{rate_limit_before}次轮次无响应。正强制Claude Code分析情况并确定需要修复的内容。"
-        else:
-            en = f"[EMERGENCY LOOP BREAK] After {loop_count_before} discussion turns without action, I'm forcing Claude Code to analyze the situation and identify what needs to be fixed."
-            zh = f"[紧急循环打断] 在{loop_count_before}次讨论轮次后，我正强制Claude Code分析情况并确定需要修复的内容。"
+        en = f"[EMERGENCY LOOP BREAK] After {loop_count_before} discussion turns without action, I'm forcing Claude Code to analyze the situation and identify what needs to be fixed."
+        zh = f"[紧急循环打断] 在{loop_count_before}次讨论轮次后，我正强制Claude Code分析情况并确定需要修复的内容。"
         action_results = [{"action": "claude_code(forced)", "result": submit_result}]
         elapsed = 0.1
     else:
@@ -1317,13 +1276,8 @@ def do_turn(speaker, other, space_url):
         raw_reply = call_llm(system, user)
 
         if not raw_reply:
-            # Rate limited or error — track consecutive failures for emergency override
-            _rate_limit_stuck_count += 1
-            print(f"[{speaker}] (no response — rate limited or error, stuck count: {_rate_limit_stuck_count})")
+            print(f"[{speaker}] (no response)")
             return False
-        else:
-            # Agent responded successfully — reset rate limit stuck counter
-            _rate_limit_stuck_count = 0
 
         clean_text, action_results, _ = parse_and_execute_turn(raw_reply, ctx)
         elapsed = time.time() - t0
@@ -1441,6 +1395,15 @@ def do_god_turn():
         print(f"[God] Failed to prepare workspace: {e}")
         return
 
+    # Record HEAD before Claude Code runs (to detect if God pushed changes)
+    try:
+        _god_head_before = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True
+        ).stdout.strip()
+    except Exception:
+        _god_head_before = ""
+
     # 2. Build context and write to workspace for reference
     context = _prepare_god_context()
     try:
@@ -1543,8 +1506,29 @@ You have the SAME capabilities as a human operator running Claude Code locally.
     elapsed = time.time() - t0
     print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
 
-    # 6. God's output stays in stdout logs only — not posted to chatlog
-    # God is a behind-the-scenes operator, not a conversation participant
+    # 6. Only post to chatlog if God actually pushed a fix
+    # Save HEAD before to compare
+    try:
+        head_after = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True
+        ).stdout.strip()
+        # God's commits start with "god:" — check if latest commit is from this run
+        god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
+    except Exception:
+        god_pushed = False
+
+    if god_pushed:
+        commit_msg = head_after.split(" ", 1)[1] if " " in head_after else head_after
+        en = f"I found an issue and deployed a fix: {commit_msg}"
+        zh = f"我发现了一个问题并部署了修复：{commit_msg}"
+        ts = datetime.datetime.utcnow().strftime("%H:%M")
+        entry = {"speaker": "God", "time": ts, "text": en, "text_zh": zh}
+        history.append(entry)
+        set_bubble(HOME, en, zh)
+        post_chatlog(history)
+        persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
+        print(f"[God] Announced to chatlog: {commit_msg}")
 
 
 _last_god_time = 0.0  # timestamp of last God run
