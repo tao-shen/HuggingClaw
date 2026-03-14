@@ -1434,7 +1434,13 @@ You have the SAME capabilities as a human operator running Claude Code locally.
    git commit -m "god: <brief description>"
    git push
    WARNING: Pushing restarts the Space. Only push if the fix is correct and necessary.
-5. REPORT: Print a brief summary (2-5 sentences) of your findings and any changes made.
+5. REPORT: At the very end of your output, write a single line starting with [REPORT] that summarizes
+   what you found and what you did. This line will be shown to Adam & Eve in the chatlog.
+   Examples:
+   - [REPORT] System is healthy. Adam & Eve are making good progress on Cain's infrastructure.
+   - [REPORT] Found agents stuck in env var discussion loop. Fixed system prompt to inject completed action history.
+   - [REPORT] Rate limit active, no conversation happening. No mechanism issues found.
+   Be specific about what you observed and what you changed (if anything).
 
 ## Rules
 - Do NOT modify Cain's Space or code — only improve conversation-loop.py (the mechanism).
@@ -1468,10 +1474,33 @@ You have the SAME capabilities as a human operator running Claude Code locally.
         print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
     env["CI"] = "true"
 
-    # 5. Announce analysis start to chatlog
+    # 5. Announce analysis start — describe current observations dynamically
+    observations = []
+    if _rate_limited:
+        observations.append("Zhipu API is rate-limited, Adam & Eve turns are returning empty")
+    if _discussion_loop_count >= 3:
+        observations.append(f"discussion loop detected ({_discussion_loop_count} consecutive turns without task assignment)")
+    elif _discussion_loop_count >= 1:
+        observations.append(f"{_discussion_loop_count} turn(s) without task assignment")
+    if cc_status.get("running"):
+        observations.append(f"Claude Code is working on: {cc_status.get('task', '?')[:80]}")
+    elif cc_status.get("result"):
+        observations.append("Claude Code just finished a task, pending review")
+    if child_state["stage"] not in ("RUNNING",):
+        observations.append(f"{CHILD_NAME} is in stage: {child_state['stage']}")
+    if not history:
+        observations.append("no conversation history yet (fresh start)")
+    elif len(history) <= 4:
+        observations.append(f"only {len(history)} messages so far (early stage)")
+
+    if observations:
+        obs_str = "; ".join(observations)
+        start_en = f"Starting system review. Current observations: {obs_str}."
+        start_zh = f"开始系统审查。当前观察：{obs_str}。"
+    else:
+        start_en = "Starting routine system review."
+        start_zh = "开始例行系统审查。"
     ts_start = datetime.datetime.utcnow().strftime("%H:%M")
-    start_en = "I'm reviewing the system — checking conversation patterns and mechanism health."
-    start_zh = "我正在审查系统——检查对话模式和机制健康状况。"
     entry_start = {"speaker": "God", "time": ts_start, "text": start_en, "text_zh": start_zh}
     history.append(entry_start)
     set_bubble(HOME, start_en, start_zh)
@@ -1515,7 +1544,16 @@ You have the SAME capabilities as a human operator running Claude Code locally.
     elapsed = time.time() - t0
     print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
 
-    # 7. Announce result to chatlog
+    # 7. Parse [REPORT] from God's output and post to chatlog
+    report_match = re.search(r'\[REPORT\]\s*(.+)', output)
+    if report_match:
+        report = report_match.group(1).strip()
+    else:
+        # Fallback: use last non-empty line of output
+        non_empty = [l for l in output_lines if l.strip()] if output_lines else []
+        report = non_empty[-1] if non_empty else "Analysis complete."
+
+    # Check if God pushed changes
     try:
         head_after = subprocess.run(
             "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
@@ -1525,20 +1563,16 @@ You have the SAME capabilities as a human operator running Claude Code locally.
     except Exception:
         god_pushed = False
 
-    ts_end = datetime.datetime.utcnow().strftime("%H:%M")
     if god_pushed:
-        commit_msg = head_after.split(" ", 1)[1] if " " in head_after else head_after
-        en = f"Review complete. I found an issue and deployed a fix: {commit_msg}. The system will restart shortly."
-        zh = f"审查完成。我发现了一个问题并部署了修复：{commit_msg}。系统将很快重启。"
-    else:
-        en = "Review complete. Everything looks healthy, no changes needed."
-        zh = "审查完成。一切正常，无需修改。"
-    entry_end = {"speaker": "God", "time": ts_end, "text": en, "text_zh": zh}
+        report += " System will restart shortly to apply changes."
+
+    ts_end = datetime.datetime.utcnow().strftime("%H:%M")
+    entry_end = {"speaker": "God", "time": ts_end, "text": report, "text_zh": report}
     history.append(entry_end)
-    set_bubble(HOME, en, zh)
+    set_bubble(HOME, report[:200], report[:200])
     post_chatlog(history)
-    persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
-    print(f"[God] Result: {'pushed fix' if god_pushed else 'all clear'}")
+    persist_turn("God", turn_count, report, report, [], workflow_state, child_state["stage"])
+    print(f"[God] Report: {report}")
 
 
 _last_god_time = 0.0  # timestamp of last God run
