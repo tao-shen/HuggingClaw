@@ -1497,18 +1497,8 @@ You have the SAME capabilities as a human operator running Claude Code locally.
     elapsed = time.time() - t0
     print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
 
-    # 6. Extract summary for chatlog (truncate if too long)
-    summary = output
-    if len(summary) > 1500:
-        summary = "...(analysis truncated)...\n" + summary[-1500:]
-
-    # 7. Log to chatlog
-    ts = datetime.datetime.utcnow().strftime("%H:%M")
-    entry = {"speaker": "God", "time": ts, "text": summary, "text_zh": summary}
-    history.append(entry)
-    set_bubble(HOME, summary[:200], summary[:200])
-    post_chatlog(history)
-    persist_turn("God", turn_count, summary, summary, [], workflow_state, child_state["stage"])
+    # 6. God's output stays in stdout logs only — not posted to chatlog
+    # God is a behind-the-scenes operator, not a conversation participant
 
 
 _last_god_time = 0.0  # timestamp of last God run
