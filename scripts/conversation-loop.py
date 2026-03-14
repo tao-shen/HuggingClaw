@@ -647,7 +647,7 @@ def call_llm(system_prompt, user_prompt):
     now = time.time()
     if _rate_limit_until > now:
         wait_secs = _rate_limit_until - now
-        print(f"[RATE-LIMIT] Sleeping {wait_secs:.0f}s until reset ({datetime.datetime.utcfromtimestamp(_rate_limit_until).strftime('%H:%M:%S')} UTC)")
+        print(f"[RATE-LIMIT] Sleeping {wait_secs:.0f}s until reset ({datetime.datetime.utcfromtimestamp(_rate_limit_until).strftime('%Y-%m-%d %H:%M:%S')} UTC)")
         time.sleep(min(wait_secs + 5, 600))  # cap at 10 min per sleep
         _rate_limit_until = 0.0  # reset after sleeping
 
@@ -685,10 +685,12 @@ def call_llm(system_prompt, user_prompt):
                 m = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', err_msg)
                 if m:
                     try:
-                        reset_dt = datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-                        _rate_limit_until = reset_dt.timestamp()
+                        # Zhipu returns Beijing time (UTC+8), convert to UTC
+                        reset_beijing = datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                        reset_utc = reset_beijing - datetime.timedelta(hours=8)
+                        _rate_limit_until = reset_utc.timestamp()
                         wait = _rate_limit_until - time.time()
-                        print(f"[RATE-LIMIT] Hit! Reset at {m.group(1)} UTC ({wait:.0f}s). Will sleep on next call.")
+                        print(f"[RATE-LIMIT] Hit! Reset at {m.group(1)} Beijing = {reset_utc.strftime('%H:%M:%S')} UTC ({wait:.0f}s). Will sleep on next call.")
                     except ValueError:
                         _rate_limit_until = time.time() + 300  # fallback: 5 min
                         print(f"[RATE-LIMIT] Hit! Could not parse reset time, backing off 5 min.")
