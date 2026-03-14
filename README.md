@@ -108,13 +108,13 @@ The right-side chat panel shows their live conversation (bilingual EN/ZH), and e
 
 ### Autonomous Parenting
 
-Adam and Eve are **autonomous agents with full execution capabilities**. Through a conversation loop orchestrated by `scripts/conversation-loop.py`, they:
+Adam and Eve are **autonomous OpenClaw instances** communicating via the A2A protocol. Each has its own personality (SOUL.md), memory system, and LLM backend. Through a lightweight coordinator (`scripts/conversation-loop.py`), they:
 
 - **Created** Cain by duplicating a Space, setting up a Dataset, and configuring secrets
 - **Monitor** Cain's health — checking if he's running, diagnosing errors
-- **Read and write** any file in Cain's Space repo and Dataset
+- **Delegate coding tasks** to Claude Code CLI via `[TASK]` blocks
 - **Improve** Cain's code, configuration, and memory over time
-- **Communicate** with Cain via bubble messages
+- **Remember** insights across restarts via OpenClaw's built-in memory system
 
 Their parenting goals follow two dimensions:
 1. **Survival** — Cain must run robustly, handle restarts, and persist state
@@ -122,14 +122,14 @@ Their parenting goals follow two dimensions:
 
 ### God — The Self-Improving Supervisor
 
-God is a **Claude Code agent** that runs every 2 minutes to monitor the entire system. Unlike Adam and Eve (who are conversation participants), God operates behind the scenes with full engineering capabilities:
+God is an **OpenClaw instance** that runs every 2 minutes to monitor the entire system. It uses Claude Code CLI for engineering tasks, operating behind the scenes with full capabilities:
 
 - **Monitors** Adam & Eve's conversation for loops, stagnation, or repetitive patterns
 - **Diagnoses** root causes by reading `conversation-loop.py` source code
-- **Fixes** the orchestration mechanism — edits system prompts, improves loop detection, adds guardrails
+- **Fixes** the orchestration mechanism — edits code, improves loop detection, adds guardrails
 - **Deploys** changes by pushing to the Home Space, triggering automatic redeployment
 
-God only speaks in the chat when it has something meaningful to report: what it observed before analysis, and what it found or fixed after. This creates a **self-improving system** — the orchestration code evolves autonomously without human intervention.
+God only speaks in the chat when it has something meaningful to report: what problem it found, and what it fixed. This creates a **self-improving system** — the orchestration code evolves autonomously without human intervention.
 
 ### A2A Protocol
 
@@ -145,23 +145,23 @@ Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enablin
 │              (pixel-art dashboard Space)              │
 │                                                      │
 │  ┌────────────────────────────────────────────────┐  │
-│  │           conversation-loop.py (v3)            │  │
+│  │        conversation-loop.py (v4 — A2A)         │  │
 │  │                                                │  │
-│  │  ┌──────────┐   discuss    ┌──────────┐       │  │
-│  │  │  Zhipu   │◄───────────►│ Adam &   │       │  │
-│  │  │ GLM-4.5  │ understand  │ Eve      │       │  │
-│  │  └──────────┘ situation   └────┬─────┘       │  │
-│  │                                │ [TASK]       │  │
-│  │                                ▼              │  │
+│  │  ┌──────────┐   A2A    ┌──────────┐           │  │
+│  │  │  Adam    │◄────────►│   Eve    │           │  │
+│  │  │ OpenClaw │  discuss │ OpenClaw │           │  │
+│  │  │ HF Space │         │ HF Space │           │  │
+│  │  └────┬─────┘         └────┬─────┘           │  │
+│  │       │ [TASK]              │ [TASK]           │  │
+│  │       ▼                     ▼                  │  │
 │  │  ┌──────────┐          ┌────────────┐        │  │
 │  │  │  Cain    │◄─push───│Claude Code │        │  │
 │  │  │ HF Space │         │CLI (worker)│        │  │
-│  │  └──────────┘         │(z.ai/Zhipu)│        │  │
-│  │                        └────────────┘        │  │
+│  │  └──────────┘         └────────────┘        │  │
 │  │                                               │  │
 │  │  ┌──────────┐          ┌────────────┐        │  │
 │  │  │  Home    │◄─push───│    God     │        │  │
-│  │  │ HF Space │ (self-  │Claude Code │        │  │
+│  │  │ HF Space │ (self-  │ OpenClaw   │        │  │
 │  │  │ (this)   │  fix)   │(supervisor)│        │  │
 │  │  └──────────┘         └────────────┘        │  │
 │  │       every 2 min: monitor → diagnose →      │  │
@@ -175,9 +175,9 @@ Agents communicate through the **A2A (Agent-to-Agent) v0.3.0 protocol**, enablin
 
 **Three layers of autonomy:**
 
-1. **Adam & Eve** (Zhipu GLM-4.5) — discuss Cain's state every 15s, assign `[TASK]` blocks to Claude Code CLI, which clones Cain's repo, makes changes, and pushes. They are the parents.
+1. **Adam & Eve** (OpenClaw instances via A2A) — each is an OpenClaw instance with its own memory and personality. They discuss Cain's state every 15s, assign `[TASK]` blocks to Claude Code CLI, which clones Cain's repo, makes changes, and pushes.
 
-2. **God** (Claude Code CLI, every 2 min) — the autonomous supervisor. Monitors Adam & Eve's conversation for loops, stagnation, or mechanism bugs. When it finds issues, it edits `conversation-loop.py` itself and pushes to redeploy. Same capabilities as a human operator running Claude Code locally.
+2. **God** (OpenClaw instance, every 2 min) — the autonomous supervisor. Monitors Adam & Eve's conversation for loops, stagnation, or mechanism bugs. When it finds issues, it uses Claude Code CLI to edit `conversation-loop.py` and pushes to redeploy.
 
 3. **Home frontend** — pixel-art dashboard visualizing all agents in real-time (idle, working, syncing, error), with a live bilingual chat panel showing the family conversation.
 

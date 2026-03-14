@@ -4546,9 +4546,14 @@ function toggleBrokerPanel() {
                     } else {
                         // 儿子及其他访客：使用 guest_anim 动画精灵（32×32，8 帧 idle 动画）
                         const aid = String(agent.agentId || '');
-                        let hash = 0;
-                        for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
-                        const animIdx = (hash % 6) + 1;
+                        let animIdx;
+                        if (aid.toLowerCase() === 'cain') {
+                            animIdx = 1; // Cain (first child) = red (guest_anim_1)
+                        } else {
+                            let hash = 0;
+                            for (let i = 0; i < aid.length; i++) hash = (hash * 31 + aid.charCodeAt(i)) >>> 0;
+                            animIdx = (hash % 6) + 1;
+                        }
                         const animKey = `guest_anim_${animIdx}`;
                         const animIdleKey = `guest_anim_${animIdx}_idle`;
 
