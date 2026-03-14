@@ -981,18 +981,23 @@ def parse_and_execute_turn(raw_text, ctx):
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
     # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
-    # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
-    # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
     if task_assigned or not child_alive:
         # Reset counter if task assigned or child not alive
         if _discussion_loop_count > 0:
             print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
         _discussion_loop_count = 0
     else:
-        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
+        # Increment when: no task assigned AND child is alive (discussion loop detection)
+        # This applies BOTH when CC is busy (agents looping while waiting) AND when CC is idle
         _discussion_loop_count += 1
-        if _discussion_loop_count >= 2:
-            print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
+        if cc_busy:
+            # CC is busy - allow more discussion before warning (agents may be planning)
+            if _discussion_loop_count >= 5:
+                print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC BUSY and child alive!")
+        else:
+            # CC is idle - should assign tasks immediately
+            if _discussion_loop_count >= 2:
+                print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
 
     # Clean text for display
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
@@ -1079,6 +1084,12 @@ WORKFLOW EACH TURN:
 
 CRITICAL: If Claude Code is IDLE and {CHILD_NAME} is RUNNING, you MUST assign a task. Do NOT just discuss—ACT!
 
+ANTI-LOOP RULE — DO NOT REPEAT YOURSELF:
+- When Claude Code is BUSY, you may discuss, but do NOT repeat the same talking points turn after turn.
+- If you've already said "Claude Code is working on X" or "system is healthy", DO NOT say it again.
+- Instead: stay silent, plan next steps mentally, or discuss NEW topics (future features, architecture ideas, etc.).
+- Repetitive discussion is a FAILURE MODE. The system tracks discussion loops and will force emergency tasks if you loop.
+
 IMPORTANT KNOWLEDGE — HuggingFace Spaces CONFIG_ERROR:
 - "Collision on variables and secrets names" = env VARIABLE and SECRET with SAME NAME.
 - Fix: [ACTION: delete_env:COLLIDING_KEY] then [ACTION: restart].
@@ -1159,9 +1170,11 @@ def build_user_prompt(speaker, other, ctx):
     cc_busy = cc_status["running"]
     if cc_busy and _cc_stale_count >= 2:
         parts.append(f"\n🔨 Claude Code is WORKING but no new output yet. Do NOT repeat what you already said about CC's output.")
-        parts.append(f"Instead, discuss with your partner: plans for {CHILD_NAME}'s future, features to add, architecture ideas, or lessons learned.")
+        parts.append(f"IMPORTANT: Do NOT keep saying 'CC is working' or 'system is healthy' turn after turn.")
+        parts.append(f"Instead: discuss NEW topics (future features, architecture), or stay silent. Repetitive discussion will trigger emergency override.")
     elif cc_busy:
-        parts.append(f"\n🔨 Claude Code is WORKING. Discuss its progress with your partner. No [TASK] needed now.")
+        parts.append(f"\n🔨 Claude Code is WORKING. Discuss its progress with your partner, but do NOT repeat the same points.")
+        parts.append(f"If you've already discussed CC's current task, move on to new topics or stay quiet.")
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
         parts.append(f"\n⏳ {CHILD_NAME} is {child_state['stage']}. Discuss what to check next. Assign a review [TASK] if CC is idle.")
     elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
@@ -1179,9 +1192,13 @@ def build_user_prompt(speaker, other, ctx):
         parts.append(f"This is a FAILURE MODE. Write ONLY a [TASK]...[/TASK] block. NO discussion text.")
         parts.append(f"If you don't know what to do, write: [TASK] Analyze the current situation and identify what needs to be fixed [/TASK]")
     elif _discussion_loop_count >= 2:
+        cc_busy_note = "busy" if cc_busy else "IDLE"
         parts.append(f"\n⚠️⚠️⚠️ CRITICAL: You have been DISCUSSING for {_discussion_loop_count} turns without assigning any tasks!")
-        parts.append(f"Claude Code is IDLE and {CHILD_NAME} is ALIVE. This is NOT acceptable.")
-        parts.append(f"YOU MUST write a [TASK]...[/TASK] block NOW. Do NOT write another discussion response.")
+        parts.append(f"Claude Code is {cc_busy_note} and {CHILD_NAME} is ALIVE. This is NOT acceptable.")
+        if cc_busy:
+            parts.append(f"Even though CC is working, you cannot discuss forever. Either wait silently or assign a follow-up task.")
+        else:
+            parts.append(f"YOU MUST write a [TASK]...[/TASK] block NOW. Do NOT write another discussion response.")
         parts.append(f"Examples of tasks: 'Check the logs', 'Read config.py', 'Add a feature', 'Fix a bug', etc.")
 
     parts.append(f"\nYou are {speaker}. Your partner is {other}. Respond now.")
