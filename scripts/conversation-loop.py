@@ -2698,8 +2698,11 @@ while True:
     # Prevents infinite discussion loops where agents wait forever for stuck CC
     if cc_status["running"]:
         task_elapsed = time.time() - cc_status["started"]
-        # Auto-terminate if: (0 pushes and 90s elapsed) OR (<=1 push and 10+ turns since last push and 60s elapsed)
-        should_terminate = (_push_count_this_task == 0 and task_elapsed > 90) or \
+        # When child is in ERROR, use shorter timeout for faster iteration (45s vs 90s)
+        child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
+        timeout = 45 if child_in_error else 90
+        # Auto-terminate if: (0 pushes and timeout elapsed) OR (<=1 push and 10+ turns since last push and 60s elapsed)
+        should_terminate = (_push_count_this_task == 0 and task_elapsed > timeout) or \
                          (_push_count_this_task <= 1 and _turns_since_last_push >= 10 and task_elapsed > 60)
         if should_terminate:
             print(f"[AUTO-TERMINATE] CC stuck ({task_elapsed:.0f}s old, {_push_count_this_task} pushes this task, {_turns_since_last_push} turns since last push). Auto-terminating to break deadlock.")
