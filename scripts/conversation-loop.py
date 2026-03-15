@@ -2234,12 +2234,15 @@ def do_turn(speaker, other, space_url):
     # IMPORTANT: Also triggers when child is in ERROR state (not alive) - that's when agents are most stuck!
     # CRITICAL: Also triggers on PUSH FREQUENCY CRISIS - _discussion_loop_count resets on forced tasks, so we need this backup
     cc_busy = cc_status["running"]
-    child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
+    # FIX: Use alive field as source of truth - when alive:False, child is broken and needs fixing
+    # Don't treat stage==RUNNING as alive because stage stays "RUNNING" even during RUNTIME_ERROR
+    child_alive = child_state["alive"]
     child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
     # Push frequency crisis: trigger when 10+ turns without push (even with CC busy) or 8+ turns with CC idle
     push_freq_crisis = (_turns_since_last_push >= 10) or (_turns_since_last_push >= 8 and not cc_busy)
-    # Lowered threshold from 3 to 2: fail fast, force action earlier when CC is idle
-    if (_discussion_loop_count >= 2 and not cc_busy and (child_alive or child_in_error)) or push_freq_crisis:
+    # CRITICAL: Also trigger IMMEDIATELY when child is NOT alive (regardless of discussion count)
+    # This fixes the bug where Cain stays in error for 40+ minutes without action
+    if (_discussion_loop_count >= 2 and not cc_busy and (child_alive or child_in_error)) or push_freq_crisis or (not child_alive and not cc_busy and _discussion_loop_count >= 1):
         # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
         if push_freq_crisis:
             print(f"[LOOP-BREAK] EMERGENCY: {speaker} has {_turns_since_last_push} turns since last push (PUSH FREQUENCY CRISIS). Forcing task assignment.")
