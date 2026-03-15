@@ -2226,7 +2226,7 @@ def do_turn(speaker, other, space_url):
             print(f"[CC-AUTO-KILL] {terminate_result}")
 
     # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop OR push frequency crisis
-    # This bypasses the agent when they've discussed for 5+ turns with CC idle
+    # This bypasses the agent when they've discussed for 2+ turns with CC idle (lowered from 3 for faster action)
     # IMPORTANT: Also triggers when child is in ERROR state (not alive) - that's when agents are most stuck!
     # CRITICAL: Also triggers on PUSH FREQUENCY CRISIS - _discussion_loop_count resets on forced tasks, so we need this backup
     cc_busy = cc_status["running"]
@@ -2234,7 +2234,8 @@ def do_turn(speaker, other, space_url):
     child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
     # Push frequency crisis: trigger when 10+ turns without push (even with CC busy) or 8+ turns with CC idle
     push_freq_crisis = (_turns_since_last_push >= 10) or (_turns_since_last_push >= 8 and not cc_busy)
-    if (_discussion_loop_count >= 3 and not cc_busy and (child_alive or child_in_error)) or push_freq_crisis:
+    # Lowered threshold from 3 to 2: fail fast, force action earlier when CC is idle
+    if (_discussion_loop_count >= 2 and not cc_busy and (child_alive or child_in_error)) or push_freq_crisis:
         # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
         if push_freq_crisis:
             print(f"[LOOP-BREAK] EMERGENCY: {speaker} has {_turns_since_last_push} turns since last push (PUSH FREQUENCY CRISIS). Forcing task assignment.")
