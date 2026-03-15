@@ -2700,7 +2700,14 @@ while True:
         task_elapsed = time.time() - cc_status["started"]
         # When child is in ERROR, use shorter timeout for faster iteration (45s vs 90s)
         child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
-        timeout = 45 if child_in_error else 90
+        # If agents are actively discussing (have context) while CC is stuck on analysis, terminate faster
+        # Discussion means agents likely have the fix location - no need to wait for file reading
+        if child_in_error and _discussion_loop_count >= 3:
+            timeout = 20  # Very fast: agents know what's wrong, CC is just wasting time reading
+        elif child_in_error:
+            timeout = 45  # Fast iteration when child is broken
+        else:
+            timeout = 90  # Normal timeout for healthy child
         # Auto-terminate if: (0 pushes and timeout elapsed) OR (<=1 push and 10+ turns since last push and 60s elapsed)
         should_terminate = (_push_count_this_task == 0 and task_elapsed > timeout) or \
                          (_push_count_this_task <= 1 and _turns_since_last_push >= 10 and task_elapsed > 60)
