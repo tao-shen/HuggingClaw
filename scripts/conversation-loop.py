@@ -2691,6 +2691,23 @@ while True:
     except Exception as e:
         print(f"[A2A-HEALTH] Error checking health: {e}", file=sys.stderr)
 
+    # UNCONDITIONAL AUTO-TERMINATE: Break deadlock when CC is stuck with 0 pushes
+    # This runs EVERY iteration, not just when agents submit tasks (which they can't when CC is stuck!)
+    # Prevents infinite discussion loops where agents wait forever for stuck CC
+    if cc_status["running"]:
+        task_elapsed = time.time() - cc_status["started"]
+        # Auto-terminate if: (0 pushes and 90s elapsed) OR (<=1 push and 10+ turns since last push and 60s elapsed)
+        should_terminate = (_push_count_this_task == 0 and task_elapsed > 90) or \
+                         (_push_count_this_task <= 1 and _turns_since_last_push >= 10 and task_elapsed > 60)
+        if should_terminate:
+            print(f"[AUTO-TERMINATE] CC stuck ({task_elapsed:.0f}s old, {_push_count_this_task} pushes this task, {_turns_since_last_push} turns since last push). Auto-terminating to break deadlock.")
+            with cc_lock:
+                old_assignee = cc_status["assigned_by"]
+                cc_status["running"] = False
+                cc_status["result"] = f"(AUTO-TERMINATED - {_push_count_this_task} pushes this task, {_turns_since_last_push} turns since last push after {task_elapsed:.0f}s)"
+                _cc_stale_count = 0
+                _last_cc_snapshot = ""
+
     # Eve's turn with error handling to prevent loop crash
     try:
         do_turn("Eve", "Adam", EVE_SPACE)
