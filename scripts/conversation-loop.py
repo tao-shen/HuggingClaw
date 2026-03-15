@@ -1985,11 +1985,19 @@ def build_turn_message(speaker, other, ctx):
             parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
             parts.append(f"When cooldown ends, FIRST review whether that fix worked before writing a new [TASK].")
     elif child_state["alive"] and cc_status.get("result"):
+        result = cc_status.get("result", "")
+        # Detect early failure: very short result likely means CC failed before doing actual work
+        is_early_failure = len(result) < 500 and "===" not in result and "[tool" not in result
         if recent_task_reminder:
             last_completed, last_by, last_at = recent_task_reminder
             parts.append(f"\n{CHILD_NAME} is alive. REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+        # EARLY FAILURE: CC failed during init - agents MUST re-assign immediately, no discussion
+        if is_early_failure:
+            parts.append(f"\n🛑 CRITICAL: CC FAILED during initialization! Result is too short ({len(result)} chars).")
+            parts.append(f"Write ONLY [TASK]...[/TASK] this turn. NO discussion. NO review.")
+            parts.append(f"CC is now IDLE. Re-assign the task immediately with SAME instructions.")
         # ZERO-PUSH EMERGENCY: No "brief review" - agents abuse this to keep discussing
-        if _push_count_this_task == 0:
+        elif _push_count_this_task == 0:
             parts.append(f"\n🛑 CC FINISHED but ZERO pushes THIS TASK! Do NOT discuss. Do NOT review.")
             parts.append(f"Write ONLY [TASK]...[/TASK] this turn. NO other text.")
             parts.append(f"Agents keep saying 'monitoring' and 'planning' instead of pushing. STOP IT.")
