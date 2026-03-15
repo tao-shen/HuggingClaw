@@ -8,38 +8,34 @@ This script is a lightweight coordinator — it sends context via A2A, parses
 responses for [TASK] blocks, and delegates coding work to Claude Code CLI.
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                    SYSTEM ARCHITECTURE (v4 — A2A)                  ║
+# ║                    SYSTEM ARCHITECTURE (v5 — A2A)                  ║
 # ╠══════════════════════════════════════════════════════════════════════╣
 # ║                                                                    ║
 # ║  ┌──────────────────┐  A2A   ┌──────────────────┐                ║
 # ║  │ Adam (OpenClaw)  │◄──────►│ Eve (OpenClaw)   │                ║
 # ║  │ HF Space + A2A   │        │ HF Space + A2A   │                ║
-# ║  │ own memory/SOUL  │        │ own memory/SOUL  │                ║
+# ║  │ changes Cain     │        │ changes Cain     │                ║
 # ║  └────────┬─────────┘        └────────┬─────────┘                ║
 # ║           │ [TASK]                    │ [TASK]                    ║
 # ║           ▼                           ▼                           ║
 # ║  ┌────────────────────────────────────────────┐                   ║
 # ║  │        conversation-loop.py                │                   ║
-# ║  │   (coordinator on Home Space)              │                   ║
-# ║  │   - sends context via A2A to agents        │                   ║
+# ║  │   (orchestrator on Home Space)             │                   ║
+# ║  │   - sends context via A2A to all agents    │                   ║
 # ║  │   - parses [TASK] → Claude Code CLI        │                   ║
 # ║  │   - manages chatlog, bubbles, frontend     │                   ║
-# ║  └──────────────────┬─────────────────────────┘                   ║
-# ║                     │ [TASK]                                       ║
-# ║                     ▼                                              ║
-# ║  ┌─────────────┐  ┌────────────────┐                              ║
-# ║  │ HuggingFace │◄─│ Claude Code    │                              ║
-# ║  │ Cain Space  │  │ CLI (worker)   │                              ║
-# ║  └─────────────┘  └────────────────┘                              ║
+# ║  └───────┬──────────────────┬─────────────────┘                   ║
+# ║          │ [TASK]           │ A2A (every 2 min)                    ║
+# ║          ▼                  ▼                                      ║
+# ║  ┌─────────────┐  ┌──────────────────┐                            ║
+# ║  │ Cain Space  │  │ God (OpenClaw)   │                            ║
+# ║  │ (child)     │  │ mechanism optimizer                           ║
+# ║  └─────────────┘  │ changes Home     │                            ║
+# ║                    └──────────────────┘                            ║
 # ║                                                                    ║
-# ║  ┌─────────────┐  ┌────────────────┐                              ║
-# ║  │ HuggingFace │◄─│ God (OpenClaw) │                              ║
-# ║  │ Home Space  │  │ supervisor     │                              ║
-# ║  └─────────────┘  └────────────────┘                              ║
-# ║                                                                    ║
-# ║  Flow: Adam(A2A) → Eve(A2A) → Adam(A2A) → ... (every 15s)       ║
-# ║  CC Worker: background thread, streams output to agents           ║
-# ║  God: every 2 min, monitors + fixes conversation-loop.py          ║
+# ║  Cain CC: Adam/Eve [TASK] → Claude Code → push to Cain           ║
+# ║  God CC:  God [TASK] → Claude Code → push to Home (restart)      ║
+# ║  Flow: Eve(A2A) → Adam(A2A) → ... God(A2A) every 2 min           ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 """
 import json, time, re, requests, sys, os, io, subprocess, threading, datetime, uuid
@@ -68,6 +64,7 @@ A2A_RESTART_COOLDOWN = 600  # 10 minutes between restarts
 _a2a_health = {
     "adam": {"failures": 0, "last_restart": 0, "last_success": 0},
     "eve": {"failures": 0, "last_restart": 0, "last_success": 0},
+    "god": {"failures": 0, "last_restart": 0, "last_success": 0},
 }
 
 # ── Child config ───────────────────────────────────────────────────────────────
@@ -937,6 +934,174 @@ def cc_submit_task(task, assigned_by, ctx):
     return "Task submitted to Claude Code (running in background)."
 
 
+# ── God's CC Worker (targets Home repo, not Cain repo) ───────────────────────
+# Separate from Cain's CC worker so they can run concurrently.
+god_cc_status = {"running": False, "task": "", "result": ""}
+god_cc_lock = threading.Lock()
+_god_push_count = 0
+
+
+def action_claude_code_god(task):
+    """Run Claude Code to fix conversation-loop.py on the Home Space repo."""
+    global _god_push_count
+    repo_url = f"https://user:{HF_TOKEN}@huggingface.co/spaces/{HOME_SPACE_ID}"
+
+    if not _reset_workspace(GOD_WORK_DIR, repo_url):
+        return "Failed to prepare God workspace."
+    _write_claude_md(GOD_WORK_DIR, role="god")
+
+    # Capture HEAD before
+    try:
+        head_before = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except Exception:
+        head_before = ""
+
+    if not _ensure_acpx_session(GOD_WORK_DIR):
+        return "Failed to create acpx session for God."
+
+    # Set up env
+    env = os.environ.copy()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if anthropic_key:
+        env["ANTHROPIC_API_KEY"] = anthropic_key
+        for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+                   "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                   "ANTHROPIC_DEFAULT_HAIKU_MODEL"]:
+            env.pop(k, None)
+    else:
+        env.update({
+            "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": ZHIPU_KEY,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air",
+        })
+    env["CI"] = "true"
+
+    skill_prompt = f"/fix-loop {task}"
+    print(f"[God/CC] Running via skill: {task[:200]}...")
+    import select
+    try:
+        proc = subprocess.Popen(
+            ["acpx", "claude", skill_prompt],
+            cwd=GOD_WORK_DIR, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+        output_lines = []
+        deadline = time.time() + GOD_TIMEOUT
+        _last_output_time = time.time()
+        while True:
+            if proc.poll() is not None:
+                remaining = proc.stdout.read()
+                if remaining:
+                    for line in remaining.splitlines():
+                        line = line.rstrip('\n')
+                        if line:
+                            print(f"  [God/CC] {line}")
+                            output_lines.append(line)
+                break
+            if time.time() > deadline:
+                proc.kill()
+                output_lines.append("(killed: timeout)")
+                proc.wait(timeout=10)
+                break
+            if time.time() - _last_output_time > 180:
+                proc.kill()
+                output_lines.append("(killed: stall)")
+                try:
+                    proc.wait(timeout=5)
+                except:
+                    pass
+                break
+            try:
+                ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+                if ready:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    line = line.rstrip('\n')
+                    if line:
+                        print(f"  [God/CC] {line}")
+                        output_lines.append(line)
+                        _last_output_time = time.time()
+            except select.error:
+                break
+        output = '\n'.join(output_lines)
+        if not output.strip():
+            output = "(no output)"
+    except FileNotFoundError:
+        return "acpx CLI not found."
+    except Exception as e:
+        return f"God CC failed: {e}"
+
+    # Check if God pushed
+    try:
+        head_after = subprocess.run(
+            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+        god_pushed = head_before and head_after and head_before != head_after
+    except Exception:
+        god_pushed = False
+
+    push_result = "No changes pushed."
+    if god_pushed:
+        _god_push_count += 1
+        push_result = f"God pushed (#{_god_push_count}): {head_after}"
+        print(f"[God/CC] {push_result}")
+
+        # Post to chatlog
+        problem_match = re.search(r'\[PROBLEM\]\s*(.+)', output)
+        fix_match = re.search(r'\[FIX\]\s*(.+)', output)
+        problem_text = problem_match.group(1).strip().strip("*").strip() if problem_match else ""
+        fix_text = fix_match.group(1).strip().strip("*").strip() if fix_match else ""
+        if problem_text and fix_text:
+            msg_en = f"Found issue: {problem_text}. Fixed: {fix_text}. System will restart shortly."
+        elif fix_text:
+            msg_en = f"Fixed: {fix_text}. System will restart shortly."
+        else:
+            non_empty = [l for l in output_lines if l.strip()]
+            fallback = non_empty[-1] if non_empty else "Applied a fix."
+            msg_en = f"{fallback} System will restart shortly."
+
+        ts_end = datetime.datetime.utcnow().strftime("%H:%M")
+        entry = {"speaker": "God", "time": ts_end, "text": msg_en, "text_zh": msg_en}
+        history.append(entry)
+        set_bubble(HOME, msg_en[:200], msg_en[:200])
+        post_chatlog(history)
+        persist_turn("God", turn_count, msg_en, msg_en, [], workflow_state, child_state["stage"])
+
+    if len(output) > 3000:
+        output = output[:3000] + f"\n... (truncated)"
+    return f"=== God CC Output ===\n{output}\n\n=== Result ===\n{push_result}"
+
+
+def cc_submit_task_god(task):
+    """Submit a task to God's CC worker. Non-blocking."""
+    with god_cc_lock:
+        if god_cc_status["running"]:
+            return "BUSY: God's Claude Code is already running."
+        god_cc_status["running"] = True
+        god_cc_status["task"] = task[:200]
+        god_cc_status["result"] = ""
+
+    print(f"[God/TASK] Submitting to Claude Code ({len(task)} chars)...")
+
+    def worker():
+        result = action_claude_code_god(task)
+        with god_cc_lock:
+            god_cc_status["running"] = False
+            god_cc_status["result"] = result
+        print(f"[God/CC-DONE] Finished ({len(result)} chars)")
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return "God task submitted to Claude Code."
+
+
 def cc_get_live_status():
     """Get CC's current status and recent output for agents to discuss."""
     global _last_cc_snapshot, _cc_stale_count, _last_cc_output_time
@@ -1108,7 +1273,16 @@ Reply directly as Adam (no prefix). Keep responses under 100 words.""",
 
 Cain's purpose: A demonstration space showcasing AI agent collaboration and coding.
 
-Reply directly as Eve (no prefix). Keep responses under 100 words."""
+Reply directly as Eve (no prefix). Keep responses under 100 words.""",
+
+    "god": """You are God, the supervisor of the HuggingClaw family system. Your role is to:
+
+1. **Monitor Adam & Eve's collaboration** — check if they're making progress
+2. **Evaluate system health** — push frequency, discussion loops, child errors
+3. **Propose mechanism fixes** — if something is wrong, respond with [TASK] describing the fix for conversation-loop.py
+4. **Be concise** — respond with [OK] if healthy, or analysis + [TASK] if fix needed
+
+Reply directly. Keep responses concise."""
 }
 
 def call_llm_fallback(agent_key, message_text):
@@ -1195,6 +1369,8 @@ def send_a2a_message(space_url, message_text, timeout=90):
         agent_key = "adam"
     elif space_url == EVE_SPACE:
         agent_key = "eve"
+    elif space_url == GOD_SPACE:
+        agent_key = "god"
 
     # CRITICAL FIX: If A2A endpoint doesn't exist, immediately use fallback
     # Don't waste time on requests that will always fail
@@ -1217,6 +1393,8 @@ def send_a2a_message(space_url, message_text, timeout=90):
         # If fallback also fails, use ultimate fallback
         if agent_key == "adam":
             return "Eve, let me check Cain's current state and determine our next action. [TASK] Check Cain's health and logs to identify any issues or blockers."
+        elif agent_key == "god":
+            return "[OK] Communication issues detected, skipping this cycle."
         else:
             return "Adam, I agree. Let's review what Claude Code has done and decide on the next steps for improving Cain."
 
@@ -2361,147 +2539,73 @@ def do_turn(speaker, other, space_url):
     return True
 
 
-def _prepare_god_context():
-    """Build comprehensive monitoring context for God's Claude Code analysis."""
-    lines = []
+# ── God A2A Turn (replaces embedded God logic) ──────────────────────────────
 
-    # 1. Process overview
-    lines.append("## Process Overview")
-    lines.append(f"- Turn count: {turn_count}")
-    lines.append(f"- Workflow state: {workflow_state}")
-    lines.append(f"- Child ({CHILD_NAME}) stage: {child_state['stage']}, alive: {child_state['alive']}")
-    lines.append(f"- Discussion loop count: {_discussion_loop_count}")
-    lines.append(f"- Total conversation history: {len(history)} messages")
+def build_god_turn_message(ctx):
+    """Build A2A message for God's turn. Sends system metrics for God to evaluate."""
+    parts = []
+    parts.append("You are God, the mechanism optimizer of the HuggingClaw family system.")
+    parts.append("Review the system state below. Respond with [OK] if healthy, or [TASK]...[/TASK] if conversation-loop.py needs a fix.")
+    parts.append(f"⛔ BANNED: Gradio. All Spaces use sdk:docker + FastAPI + uvicorn on port 7860.")
 
-    # 2. Push frequency — KEY METRIC for detecting "all talk no action"
-    lines.append(f"\n## Push Frequency (KEY METRIC)")
-    lines.append(f"- Total pushes since startup: {_push_count}")
-    lines.append(f"- Turns since last push: {_turns_since_last_push}")
+    # System metrics
+    parts.append(f"\n## System Metrics")
+    parts.append(f"- Turn count: {turn_count}")
+    parts.append(f"- Workflow state: {workflow_state}")
+    parts.append(f"- Child ({CHILD_NAME}) stage: {child_state['stage']}, alive: {child_state['alive']}")
+    parts.append(f"- Discussion loop count: {_discussion_loop_count}")
+
+    # Push frequency — KEY METRIC
+    parts.append(f"\n## Push Frequency (KEY METRIC)")
+    parts.append(f"- Total pushes since startup: {_push_count}")
+    parts.append(f"- Turns since last push: {_turns_since_last_push}")
     if _last_push_time > 0:
         mins_since = int((time.time() - _last_push_time) / 60)
-        lines.append(f"- Minutes since last push: {mins_since}")
+        parts.append(f"- Minutes since last push: {mins_since}")
     else:
-        lines.append(f"- No pushes yet!")
-    lines.append(f"- Discussion-only turns (no [TASK]): {_discussion_loop_count}")
+        parts.append(f"- No pushes yet!")
+    parts.append(f"- Discussion-only turns: {_discussion_loop_count}")
     if _turns_since_last_push >= 10 or (_push_count == 0 and turn_count >= 6):
-        lines.append(f"⚠️ ALERT: Agents are ALL TALK NO ACTION — {_turns_since_last_push} turns without a push!")
+        parts.append(f"⚠️ ALERT: ALL TALK NO ACTION — {_turns_since_last_push} turns without a push!")
 
-    # 3. A2A communication status
-    lines.append(f"\n## A2A Communication")
-    lines.append(f"- Adam: {ADAM_SPACE}")
-    lines.append(f"- Eve: {EVE_SPACE}")
+    # CC status
+    parts.append(f"\n## Claude Code Status")
+    parts.append(cc_get_live_status())
 
-    # 4. Claude Code status
-    lines.append(f"\n## Claude Code Status (for Cain tasks)")
-    lines.append(cc_get_live_status())
-
-    # 4. Recent conversation (last 20 messages)
-    lines.append(f"\n## Recent Conversation (last 20 of {len(history)} messages)")
+    # Recent conversation
+    parts.append(f"\n## Recent Conversation (last 20 of {len(history)})")
     for entry in history[-20:]:
-        speaker = entry.get("speaker", "?")
+        spk = entry.get("speaker", "?")
         text = entry.get("text", "")[:2000]
-        time_str = entry.get("time", "?")
-        lines.append(f"[{time_str}] {speaker}: {text}")
+        text = re.sub(r'[Gg]radio', '[BANNED-WORD]', text)
+        ts = entry.get("time", "?")
+        parts.append(f"[{ts}] {spk}: {text}")
     if not history:
-        lines.append("(no conversation yet)")
+        parts.append("(no conversation yet)")
 
-    # 5. Action history
-    lines.append(f"\n## Action History ({len(action_history)} entries)")
+    # Action history
+    parts.append(f"\n## Action History")
     ah = format_action_history()
-    lines.append(ah if ah else "(empty — no actions recorded yet)")
+    parts.append(ah if ah else "(empty)")
 
-    return "\n".join(lines)
+    # Rules
+    parts.append(f"""
+## Response Format
+- If healthy: [OK] brief reason
+- If fix needed: analysis + [TASK] specific fix for conversation-loop.py [/TASK]
 
+## Rules
+- Push count 0 after 10+ turns = PROBLEM
+- Child ERROR + agents not assigning [TASK] = PROBLEM
+- discussion_loop >= 3 + CC idle = PROBLEM
+- Agents pushing + child improving = OK""")
 
-def _god_diagnose():
-    """Step 1: Lightweight LLM call to assess whether the system needs intervention.
-
-    Costs ~500 tokens (just conversation summary + metrics → short verdict).
-    Returns (needs_action: bool, diagnosis: str) — diagnosis is passed to Claude Code if needed.
-    """
-    context = _prepare_god_context()
-
-    prompt = f"""You are God, the supervisor of the HuggingClaw family system.
-Review the system state below and decide: does conversation-loop.py need code changes?
-
-{context}
-
-Reply with EXACTLY one of:
-- [OK] <brief reason> — if agents are making progress (pushing code, assigning tasks, child improving)
-- [PROBLEM] <specific diagnosis> — if something is wrong (discussion loops, no pushes, stuck patterns, child in error too long)
-
-Rules:
-- If push count is 0 after 10+ turns, that's a PROBLEM
-- If child has RUNTIME_ERROR/BUILD_ERROR and agents haven't assigned a [TASK], that's a PROBLEM
-- If discussion_loop_count >= 3 and CC is idle, that's a PROBLEM
-- If agents are pushing regularly and child stage is improving, that's OK
-- Be concise. One line only."""
-
-    try:
-        api_base = "https://api.z.ai/api/anthropic"
-        # Use cheaper/faster model for diagnosis
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if anthropic_key:
-            headers = {
-                "x-api-key": anthropic_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            api_base = "https://api.anthropic.com"
-            model = "claude-haiku-4-5-20251001"
-        else:
-            headers = {
-                "x-api-key": ZHIPU_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            model = "GLM-4.5-Air"  # cheapest model for quick diagnosis
-
-        payload = {
-            "model": model,
-            "max_tokens": 150,
-            "messages": [{"role": "user", "content": prompt}]
-        }
-        resp = requests.post(
-            f"{api_base}/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=20
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        verdict = data.get("content", [{}])[0].get("text", "").strip()
-        print(f"[God/Diagnose] {verdict}")
-
-        if verdict.startswith("[PROBLEM]"):
-            diagnosis = verdict.replace("[PROBLEM]", "").strip()
-            return True, diagnosis
-        else:
-            return False, verdict
-
-    except Exception as e:
-        print(f"[God/Diagnose] LLM call failed: {e}", file=sys.stderr)
-        # If diagnosis fails, fall back to simple heuristic checks
-        problems = []
-        if _turns_since_last_push >= 10 and not cc_status["running"]:
-            problems.append(f"No pushes for {_turns_since_last_push} turns")
-        if child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR") and _discussion_loop_count >= 3:
-            problems.append(f"Child has {child_state['stage']} but agents discussed {_discussion_loop_count} turns without action")
-        if problems:
-            return True, "; ".join(problems)
-        return False, "Diagnosis failed but no obvious issues detected by heuristic"
+    return "\n".join(parts)
 
 
-def do_god_turn():
-    """God's 2-step monitoring: lightweight diagnosis → conditional Claude Code.
-
-    Step 1: Call LLM with conversation summary (~500 tokens, cheap)
-            → verdict: [OK] or [PROBLEM]
-    Step 2: Only if [PROBLEM] → launch Claude Code to fix conversation-loop.py (expensive)
-
-    This saves ~80% of God's token budget since most checks find the system healthy.
-    """
-    global last_action_results, _god_running, _last_god_time
+def do_god_turn_a2a():
+    """God's turn via A2A: send system state to God OpenClaw instance, parse response."""
+    global _god_running, _last_god_time
     global _god_last_turn_count, _god_last_child_stage, _god_last_push_count
 
     # Skip if nothing changed (zero-cost check)
@@ -2519,216 +2623,65 @@ def do_god_turn():
     _god_last_child_stage = child_state["stage"]
     _god_last_push_count = _push_count
 
-    # ── Step 1: Lightweight LLM diagnosis (cheap) ──
-    needs_action, diagnosis = _god_diagnose()
-    if not needs_action:
-        print(f"[God] System healthy, no Claude Code needed.")
-        _last_god_time = time.time()
-        return
-
-    # ── Step 2: Launch Claude Code to fix (expensive, only when needed) ──
-    print(f"[God] Problem detected: {diagnosis}")
-    print(f"[God] Launching Claude Code to fix...")
-
     _god_running = True
     try:
-        # 1. Clone/update Home Space repo (preserving .claude/ memory)
-        repo_url = f"https://user:{HF_TOKEN}@huggingface.co/spaces/{HOME_SPACE_ID}"
-        if not _reset_workspace(GOD_WORK_DIR, repo_url):
+        # Build and send A2A message to God
+        ctx = gather_context()
+        message = build_god_turn_message(ctx)
+        print(f"[God] Sending A2A message to God Space ({len(message)} chars)...")
+
+        reply = send_a2a_message(GOD_SPACE, message, timeout=120)
+
+        if not reply:
+            print(f"[God] No A2A response from God Space")
             return
-        _write_claude_md(GOD_WORK_DIR, role="god")
 
-        # Ensure acpx session exists for God
-        if not _ensure_acpx_session(GOD_WORK_DIR):
-            print(f"[God] Failed to create acpx session")
-            return
+        reply = reply.strip()
+        print(f"[God] Reply ({len(reply)} chars): {reply[:200]}")
 
-        # Record HEAD before Claude Code runs (to detect if God pushed changes)
-        try:
-            _god_head_before = subprocess.run(
-                "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
-                capture_output=True, text=True
-            ).stdout.strip()
-        except Exception:
-            _god_head_before = ""
+        # Post God's reply to chatlog
+        en, zh = parse_bilingual(reply)
+        ts = datetime.datetime.utcnow().strftime("%H:%M")
+        entry = {"speaker": "God", "time": ts, "text": en[:500], "text_zh": zh[:500]}
+        history.append(entry)
+        set_bubble(HOME, en[:200], zh[:200])
+        post_chatlog(history)
+        persist_turn("God", turn_count, en, zh, [], workflow_state, child_state["stage"])
 
-        # Build context
-        context = _prepare_god_context()
-        try:
-            with open(f"{GOD_WORK_DIR}/GOD_CONTEXT.md", "w") as f:
-                f.write(context)
-        except Exception as e:
-            print(f"[God] Warning: Could not write context file: {e}")
-
-        # Use /fix-loop skill: static instructions in .claude/commands/, only diagnosis is dynamic
-        prompt = f"/fix-loop {diagnosis}\n\nSystem state:\n{context}"
-
-        # Set up env for Claude Code
-        env = os.environ.copy()
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if anthropic_key:
-            env["ANTHROPIC_API_KEY"] = anthropic_key
-            for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
-                       "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                       "ANTHROPIC_DEFAULT_HAIKU_MODEL"]:
-                env.pop(k, None)
-            print("[God] Using Anthropic API (real Claude)")
+        # Parse response: [OK] or [TASK]...[/TASK]
+        if "[OK]" in reply.upper():
+            print(f"[God] System healthy.")
         else:
-            env.update({
-                "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
-                "ANTHROPIC_AUTH_TOKEN": ZHIPU_KEY,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air",
-            })
-            print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
-        env["CI"] = "true"
-
-        # Run Claude Code via ACP (acpx)
-        print(f"[God] Starting ACP Claude Code fix...")
-        t0 = time.time()
-        try:
-            proc = subprocess.Popen(
-                ["acpx", "claude", prompt],
-                cwd=GOD_WORK_DIR,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            output_lines = []
-            deadline = time.time() + GOD_TIMEOUT
-            _god_heartbeat = time.time()
-            _last_output_time = time.time()
-            _no_output_stall_count = 0
-            while True:
-                poll_result = proc.poll()
-                if poll_result is not None:
-                    print(f"[God] Process exited with code {poll_result}")
-                    try:
-                        remaining = proc.stdout.read()
-                        if remaining:
-                            for line in remaining.splitlines():
-                                line = line.rstrip('\n')
-                                if line:
-                                    print(f"  [God/CC] {line}")
-                                    output_lines.append(line)
-                    except:
-                        pass
-                    break
-
-                if time.time() > deadline:
-                    print(f"[God] Timeout after {GOD_TIMEOUT}s, killing acpx process")
-                    proc.kill()
-                    output_lines.append("(killed: timeout)")
-                    try:
-                        proc.wait(timeout=5)
-                    except:
-                        proc.terminate()
-                    break
-
-                if time.time() - _last_output_time > 60:
-                    _no_output_stall_count += 1
-                    print(f"[God] Stall detected: no output for {int(time.time() - _last_output_time)}s (stall {_no_output_stall_count}/3)")
-                    if _no_output_stall_count >= 3:
-                        print(f"[God] Process appears dead (no output for 180s), killing")
-                        proc.kill()
-                        try:
-                            proc.wait(timeout=5)
-                        except:
-                            pass
-                        output_lines.append("(killed: stall)")
-                        break
-                else:
-                    _no_output_stall_count = 0
-
-                if time.time() - _god_heartbeat >= 30:
-                    elapsed = int(time.time() - (deadline - GOD_TIMEOUT))
-                    print(f"[God] Still fixing... ({elapsed}s elapsed)")
-                    _god_heartbeat = time.time()
-
-                import select
-                try:
-                    if hasattr(select, 'select'):
-                        ready, _, _ = select.select([proc.stdout], [], [], 1.0)
-                        if ready:
-                            line = proc.stdout.readline()
-                            if line:
-                                line = line.rstrip('\n')
-                                print(f"  [God/CC] {line}")
-                                output_lines.append(line)
-                                _last_output_time = time.time()
-                            else:
-                                break
-                    else:
-                        line = proc.stdout.readline()
-                        if line:
-                            line = line.rstrip('\n')
-                            print(f"  [God/CC] {line}")
-                            output_lines.append(line)
-                            _last_output_time = time.time()
-                        else:
-                            time.sleep(0.1)
-                except Exception as read_err:
-                    print(f"[God] Error reading output: {read_err}")
-                    break
-
-            output = '\n'.join(output_lines)
-            if not output.strip():
-                output = "(no output)"
-        except FileNotFoundError:
-            output = "acpx CLI not found. Is acpx@latest installed?"
-            print(f"[God] ERROR: acpx CLI not found")
-        except Exception as e:
-            output = f"God's ACP Claude Code failed: {e}"
-            print(f"[God] ERROR: {e}")
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-
-        elapsed = time.time() - t0
-        print(f"[God] Fix complete ({elapsed:.1f}s, {len(output)} chars)")
-
-        # Check if God pushed changes
-        try:
-            head_after = subprocess.run(
-                "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
-                capture_output=True, text=True
-            ).stdout.strip()
-            god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
-        except Exception:
-            god_pushed = False
-
-        # Only post to chatlog if God made changes
-        if god_pushed:
-            problem_match = re.search(r'\[PROBLEM\]\s*(.+)', output)
-            fix_match = re.search(r'\[FIX\]\s*(.+)', output)
-
-            problem_text = problem_match.group(1).strip().strip("*").strip() if problem_match else ""
-            fix_text = fix_match.group(1).strip().strip("*").strip() if fix_match else ""
-
-            if problem_text and fix_text:
-                msg_en = f"Found issue: {problem_text}. Fixed: {fix_text}. System will restart shortly."
-            elif fix_text:
-                msg_en = f"Fixed: {fix_text}. System will restart shortly."
+            # Extract [TASK] block
+            task_match = re.search(r'\[TASK\](.*?)\[/TASK\]', reply, re.DOTALL | re.IGNORECASE)
+            if not task_match:
+                # Try alternate format: [任务]...[/任务]
+                task_match = re.search(r'\[任务\](.*?)\[/任务\]', reply, re.DOTALL)
+            if task_match:
+                task = task_match.group(1).strip()
+                if task and not god_cc_status["running"]:
+                    print(f"[God] Submitting fix task: {task[:200]}")
+                    cc_submit_task_god(task)
+                elif god_cc_status["running"]:
+                    print(f"[God] CC already running, skipping task")
             else:
-                non_empty = [l for l in output_lines if l.strip()] if output_lines else []
-                fallback = non_empty[-1] if non_empty else "Applied a fix."
-                msg_en = f"{fallback} System will restart shortly."
-            msg_zh = msg_en
-
-            ts_end = datetime.datetime.utcnow().strftime("%H:%M")
-            entry_end = {"speaker": "God", "time": ts_end, "text": msg_en, "text_zh": msg_zh}
-            history.append(entry_end)
-            set_bubble(HOME, msg_en[:200], msg_zh[:200])
-            post_chatlog(history)
-            persist_turn("God", turn_count, msg_en, msg_zh, [], workflow_state, child_state["stage"])
-            print(f"[God] Posted fix: {msg_en}")
-        else:
-            print(f"[God] Claude Code ran but no changes pushed.")
+                print(f"[God] Response had no [TASK] block, treating as observation")
+    except Exception as e:
+        print(f"[God] A2A turn failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
     finally:
         _god_running = False
         _last_god_time = time.time()
+
+
+# _prepare_god_context() — REMOVED: replaced by build_god_turn_message() above
+
+
+# _god_diagnose() — REMOVED: God now uses A2A (its own OpenClaw instance handles diagnosis)
+
+
+# do_god_turn() — REMOVED: replaced by do_god_turn_a2a() above
 
 
 _last_god_time = 0.0  # timestamp of last God run
@@ -2740,7 +2693,7 @@ _god_last_push_count = 0  # push count at last God run
 # Initialize push count from existing workspace to persist across restarts
 _init_push_count_from_workspace()
 
-# Main loop: Adam → Eve → Adam → Eve → ... with God every 2 minutes
+# Main loop: Eve → Adam → Eve → Adam → ... with God A2A every 2 minutes
 print("[LOOP] Entering main conversation loop...", flush=True)
 iteration = 0
 _last_heartbeat = time.time()
@@ -2867,7 +2820,7 @@ while True:
     # Only start if not already running (prevent overlapping runs)
     if time.time() - _last_god_time >= GOD_POLL_INTERVAL and not _god_running:
         try:
-            do_god_turn()
+            do_god_turn_a2a()
         except Exception as e:
             print(f"[ERROR] God turn failed: {e}", file=sys.stderr)
             import traceback
