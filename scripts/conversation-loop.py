@@ -185,16 +185,8 @@ def init_child_state():
         info = hf_api.space_info(CHILD_SPACE_ID)
         child_state["created"] = True
         child_state["stage"] = info.runtime.stage if info.runtime else "unknown"
-        try:
-            resp = requests.get(f"{CHILD_SPACE_URL}/api/state", timeout=10)
-            if resp.ok:
-                data = resp.json()
-                child_state["alive"] = True
-                child_state["state"] = data.get("state", "unknown")
-                child_state["detail"] = data.get("detail", "")
-                child_state["stage"] = "RUNNING"
-        except:
-            child_state["alive"] = (child_state["stage"] == "RUNNING")
+        # Use HF API stage as source of truth for alive (stage==RUNNING means healthy)
+        child_state["alive"] = (child_state["stage"] == "RUNNING")
         print(f"[init] {CHILD_NAME}: stage={child_state['stage']}, alive={child_state['alive']}")
     except:
         print(f"[init] {CHILD_NAME} does not exist yet")
@@ -237,25 +229,25 @@ def action_create_child():
 
 
 def action_check_health():
-    """Check Cain's health with detailed error info."""
+    """Check Cain's health with detailed error info. Returns status string, does NOT modify child_state."""
     if not child_state["created"]:
         return f"{CHILD_NAME} not born yet."
+    # Try /api/state endpoint for app-level health (returns app state like "ready", "error")
     try:
         resp = requests.get(f"{CHILD_SPACE_URL}/api/state", timeout=10)
         if resp.ok:
             data = resp.json()
-            child_state["alive"] = True
-            child_state["state"] = data.get("state", "unknown")
-            child_state["detail"] = data.get("detail", "")
-            child_state["stage"] = "RUNNING"
-            return f"{CHILD_NAME} is ALIVE! State: {child_state['state']}, Detail: {child_state['detail'] or 'healthy'}"
+            # DO NOT modify child_state here - only main loop should update stage/alive from HF API
+            app_state = data.get("state", "unknown")
+            app_detail = data.get("detail", "")
+            return f"{CHILD_NAME} app endpoint responds. State: {app_state}, Detail: {app_detail or 'healthy'}"
     except:
         pass
+    # Fall back to HF API for runtime stage (source of truth for stage/alive)
     try:
         info = hf_api.space_info(CHILD_SPACE_ID)
         stage = info.runtime.stage if info.runtime else "NO_RUNTIME"
-        child_state["stage"] = stage
-        child_state["alive"] = (stage == "RUNNING")
+        # DO NOT modify child_state here - main loop handles that
         if stage in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR", "RUNNING"):
             error_detail = ""
             try:
