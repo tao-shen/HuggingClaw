@@ -2311,7 +2311,12 @@ def do_turn(speaker, other, space_url):
         _pending_task_just_submitted = False
     # CRITICAL FIX: Also clear pending task flag when CC finishes, regardless of speaker
     # This fixes the race condition where Adam's turn comes before Eve's after CC finishes
+    # ALSO: Clear when CC is not running (handles auto-termination where result is cleared)
     elif cc_just_finished and _pending_task_just_submitted:
+        _pending_task_just_submitted = False
+    elif not cc_status["running"] and _pending_task_just_submitted:
+        # CC finished but result was cleared (e.g., auto-termination for handoff)
+        # Clear the pending flag so agents can submit new tasks
         _pending_task_just_submitted = False
 
     # Add to history with timestamp (text stays CLEAN for agent context)
