@@ -1836,6 +1836,7 @@ def build_turn_message(speaker, other, ctx):
     }
     parts.append(f"{role_hints.get(speaker, '')} Your partner is {other}.")
     parts.append(f"Claude Code is your engineer — runs in background. You discuss and assign tasks, you do NOT code.")
+    parts.append(f"⛔ BANNED: Gradio. {CHILD_NAME}'s Space uses sdk:docker + FastAPI + uvicorn on port 7860. NEVER mention or use Gradio/gr.Interface/.launch().")
 
     # Discussion/execution balance strategy
     push_alert = "" if _turns_since_last_push < 5 else f" ⚠️ {_turns_since_last_push} TURNS SINCE LAST PUSH!"
@@ -1890,11 +1891,14 @@ def build_turn_message(speaker, other, ctx):
             parts.append(f"{'='*60}")
             return "\n".join(parts)  # Return early - agent should just wait
 
-    # Conversation history
+    # Conversation history (sanitize banned terms to prevent re-infection)
     if history:
         parts.append("\n=== RECENT CONVERSATION ===")
         for h in history[-15:]:
-            parts.append(f"{h['speaker']}: {h['text'][:3000]}")
+            text = h['text'][:3000]
+            # Strip Gradio references from old turns to prevent agents re-discussing it
+            text = re.sub(r'[Gg]radio', '[BANNED-WORD]', text)
+            parts.append(f"{h['speaker']}: {text}")
 
     # Action history — what's already been done (prevents repetition)
     ah_text = format_action_history()
