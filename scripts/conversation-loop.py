@@ -2139,12 +2139,13 @@ def do_turn(speaker, other, space_url):
     ctx = gather_context()
 
     # Check if CC just finished — clear result after agents see it once
-    # ALSO reset turns-since-push counter to give agents a fresh cycle to review and push
+    # ALSO reset turns-since-push counter ONLY when there was actual progress (push)
+    # CRITICAL: Do NOT reset when zero pushes - that's exactly when we need to track the crisis!
     with cc_lock:
         cc_just_finished = (not cc_status["running"] and cc_status["result"])
-        if cc_just_finished:
-            # Reset counter when CC finishes - agents get a fresh cycle to review and push
-            # This prevents "all talk no action" where counter accumulates while CC is working
+        if cc_just_finished and _push_count_this_task > 0:
+            # Only reset counter when CC finished with at least 1 push (actual progress)
+            # This prevents "all talk no action" detection from being broken by zero-push completions
             _turns_since_last_push = 0
 
     # AUTO-TERMINATE stuck Claude Code processes
