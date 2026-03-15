@@ -52,12 +52,23 @@ sys.stderr.reconfigure(line_buffering=True)
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 HOME = "https://tao-shen-huggingclaw-home.hf.space"
 ADAM_SPACE = "https://tao-shen-huggingclaw-adam.hf.space"
+ADAM_SPACE_ID = "tao-shen/HuggingClaw-Adam"
 EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
+EVE_SPACE_ID = "tao-shen/HuggingClaw-Eve"
 GOD_SPACE  = "https://tao-shen-huggingclaw-god.hf.space"
 GOD_POLL_INTERVAL = 120  # God runs every 2 minutes (time-based, not turn-based)
 GOD_WORK_DIR = "/tmp/god-workspace"
 GOD_TIMEOUT = 600  # 10 minutes for God's Claude Code analysis
 HOME_SPACE_ID = "tao-shen/HuggingClaw-Home"
+
+# ── A2A Health Monitoring ─────────────────────────────────────────────────────
+# Track consecutive failures and last restart time for Adam/Eve
+A2A_FAILURE_THRESHOLD = 6  # Restart after 6 consecutive failures (~3 minutes)
+A2A_RESTART_COOLDOWN = 600  # 10 minutes between restarts
+_a2a_health = {
+    "adam": {"failures": 0, "last_restart": 0, "last_success": 0},
+    "eve": {"failures": 0, "last_restart": 0, "last_success": 0},
+}
 
 # ── Child config ───────────────────────────────────────────────────────────────
 CHILD_NAME = "Cain"
@@ -390,6 +401,59 @@ CLAUDE_WORK_DIR = "/tmp/claude-workspace"
 CLAUDE_TIMEOUT = 300  # 5 minutes
 TURN_INTERVAL = 15    # seconds between turns — fast enough for lively discussion
 
+# Global acpx session - persistent across all claude_code calls
+GLOBAL_ACPX_DIR = "/tmp/acpx-global-session"
+_global_acpx_initialized = False
+
+
+def _init_global_acpx_session():
+    """Initialize a global acpx session that persists across all claude_code calls.
+
+    This avoids the repeated session creation timeouts that were blocking the agents.
+    The session is created once at startup and reused for all subsequent calls.
+    """
+    global _global_acpx_initialized
+    if _global_acpx_initialized:
+        return True
+
+    print("[ACP/GLOBAL] Initializing global acpx session...")
+    try:
+        # Create the global directory
+        os.makedirs(GLOBAL_ACPX_DIR, exist_ok=True)
+
+        # Check if session already exists
+        session_file = os.path.join(GLOBAL_ACPX_DIR, ".acpx", "session.json")
+        if os.path.exists(session_file):
+            print(f"[ACP/GLOBAL] Using existing global session at {GLOBAL_ACPX_DIR}")
+            _global_acpx_initialized = True
+            return True
+
+        # Create a new session with extended timeout
+        print(f"[ACP/GLOBAL] Creating new global session at {GLOBAL_ACPX_DIR}...")
+        result = subprocess.run(
+            ["acpx", "claude", "sessions", "new"],
+            cwd=GLOBAL_ACPX_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30,  # Quick timeout - acpx should be fast or fail
+            stdin=subprocess.DEVNULL  # Prevent blocking on stdin
+        )
+        if result.returncode == 0:
+            print(f"[ACP/GLOBAL] Global session created successfully")
+            _global_acpx_initialized = True
+            return True
+        else:
+            print(f"[ACP/GLOBAL] Failed to create global session: returncode={result.returncode}, stderr={result.stderr[:300]}")
+            return False
+    except subprocess.TimeoutExpired:
+        print(f"[ACP/GLOBAL] Session creation timed out after 30s - skipping global session, will use per-call sessions")
+        # Mark as initialized to avoid repeated timeouts - let individual calls handle session creation
+        _global_acpx_initialized = False
+        return False
+    except Exception as e:
+        print(f"[ACP/GLOBAL] Error initializing global session: {e}")
+        return False
+
 
 def _write_claude_md(workspace, role="worker"):
     """Write CLAUDE.md to workspace so Claude Code loads persistent project knowledge.
@@ -471,7 +535,7 @@ Always use: git commit -m "god: <brief description>"
 
 
 def _reset_workspace(workspace, repo_url):
-    """Reset workspace to latest origin/main, preserving .claude/ memory directory."""
+    """Reset workspace to latest origin/main, preserving .claude/ and .acpx/ directories."""
     try:
         if os.path.exists(f"{workspace}/.git"):
             try:
@@ -481,11 +545,15 @@ def _reset_workspace(workspace, repo_url):
                     capture_output=True, check=True
                 )
             except Exception:
-                # Preserve .claude/ memory if it exists
+                # Preserve .claude/ memory and .acpx/ session if they exist
                 claude_dir = f"{workspace}/.claude"
+                acpx_dir = f"{workspace}/.acpx"
                 has_memory = os.path.exists(claude_dir)
+                has_acpx = os.path.exists(acpx_dir)
                 if has_memory:
                     subprocess.run(f"mv {claude_dir} /tmp/_claude_memory_bak", shell=True, capture_output=True)
+                if has_acpx:
+                    subprocess.run(f"mv {acpx_dir} /tmp/_acpx_session_bak", shell=True, capture_output=True)
                 subprocess.run(f"rm -rf {workspace}", shell=True, capture_output=True)
                 subprocess.run(
                     f"git clone --depth 20 {repo_url} {workspace}",
@@ -493,12 +561,18 @@ def _reset_workspace(workspace, repo_url):
                 )
                 if has_memory:
                     subprocess.run(f"mv /tmp/_claude_memory_bak {claude_dir}", shell=True, capture_output=True)
+                if has_acpx:
+                    subprocess.run(f"mv /tmp/_acpx_session_bak {acpx_dir}", shell=True, capture_output=True)
         else:
-            # Preserve .claude/ memory if workspace exists but is broken
+            # Preserve .claude/ memory and .acpx/ session if workspace exists but is broken
             claude_dir = f"{workspace}/.claude"
+            acpx_dir = f"{workspace}/.acpx"
             has_memory = os.path.exists(claude_dir)
+            has_acpx = os.path.exists(acpx_dir)
             if has_memory:
                 subprocess.run(f"mv {claude_dir} /tmp/_claude_memory_bak", shell=True, capture_output=True)
+            if has_acpx:
+                subprocess.run(f"mv {acpx_dir} /tmp/_acpx_session_bak", shell=True, capture_output=True)
             if os.path.exists(workspace):
                 subprocess.run(f"rm -rf {workspace}", shell=True, capture_output=True)
             subprocess.run(
@@ -507,6 +581,8 @@ def _reset_workspace(workspace, repo_url):
             )
             if has_memory:
                 subprocess.run(f"mv /tmp/_claude_memory_bak {claude_dir}", shell=True, capture_output=True)
+            if has_acpx:
+                subprocess.run(f"mv /tmp/_acpx_session_bak {acpx_dir}", shell=True, capture_output=True)
         subprocess.run(f'git config user.name "Claude Code"',
                        shell=True, cwd=workspace, capture_output=True)
         subprocess.run(f'git config user.email "claude-code@huggingclaw"',
@@ -515,6 +591,70 @@ def _reset_workspace(workspace, repo_url):
     except Exception as e:
         print(f"[WORKSPACE] Failed to prepare {workspace}: {e}")
         return False
+
+def _ensure_acpx_session(workspace, max_retries=3):
+    """Ensure acpx session exists in the workspace.
+
+    Uses the global persistent session if available, avoiding repeated
+    session creation timeouts.
+    """
+    try:
+        acpx_dir = os.path.join(workspace, ".acpx")
+        global_acpx_session = os.path.join(GLOBAL_ACPX_DIR, ".acpx", "session.json")
+
+        # If workspace already has a valid session, use it
+        if os.path.exists(acpx_dir):
+            session_file = os.path.join(acpx_dir, "session.json")
+            if os.path.exists(session_file):
+                print(f"[ACP/CLAUDE] Using existing session at {acpx_dir}")
+                return True
+            else:
+                print(f"[ACP/CLAUDE] Invalid .acpx directory, removing...")
+                subprocess.run(f"rm -rf {acpx_dir}", shell=True, capture_output=True)
+
+        # Try to use global session if available
+        if os.path.exists(global_acpx_session):
+            print(f"[ACP/CLAUDE] Linking global session to workspace...")
+            try:
+                # Create symlink to global session
+                subprocess.run(
+                    f"ln -sf {GLOBAL_ACPX_DIR}/.acpx {acpx_dir}",
+                    shell=True, check=True, capture_output=True
+                )
+                print(f"[ACP/CLAUDE] Global session linked successfully")
+                return True
+            except Exception as e:
+                print(f"[ACP/CLAUDE] Failed to link global session: {e}")
+                # Fall through to create new session
+
+        # Fallback: try to create a new session (with minimal retries since it's likely to fail)
+        print(f"[ACP/CLAUDE] No global session, attempting to create local session...")
+        for attempt in range(min(max_retries, 1)):  # Only try once to avoid wasting time
+            try:
+                result = subprocess.run(
+                    ["acpx", "claude", "sessions", "new"],
+                    cwd=workspace,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,  # Quick timeout
+                    stdin=subprocess.DEVNULL  # Prevent blocking on stdin
+                )
+                if result.returncode == 0:
+                    print(f"[ACP/CLAUDE] Local session created successfully")
+                    return True
+                else:
+                    print(f"[ACP/CLAUDE] Failed to create session: {result.stderr[:200]}")
+            except subprocess.TimeoutExpired:
+                print(f"[ACP/CLAUDE] Session creation timed out - acpx service may be unavailable")
+            except Exception as e:
+                print(f"[ACP/CLAUDE] Error creating session: {e}")
+
+        print(f"[ACP/CLAUDE] No session available - will run without acpx (may have limited functionality)")
+        return True  # Return True to allow continuation without session
+    except Exception as e:
+        print(f"[ACP/CLAUDE] Fatal error in _ensure_acpx_session: {e}")
+        return True  # Allow continuation even on error
+
 
 def action_claude_code(task):
     """Run Claude Code CLI to autonomously complete a coding task on Cain's Space."""
@@ -528,6 +668,10 @@ def action_claude_code(task):
     if not _reset_workspace(CLAUDE_WORK_DIR, repo_url):
         return "Failed to prepare workspace."
     _write_claude_md(CLAUDE_WORK_DIR, role="worker")
+
+    # 1.5. Ensure acpx session exists
+    if not _ensure_acpx_session(CLAUDE_WORK_DIR):
+        return "Failed to create acpx session."
 
     # 2. Run Claude Code via ACP (acpx) with z.ai backend (Zhipu GLM)
     env = os.environ.copy()
@@ -553,16 +697,41 @@ def action_claude_code(task):
         )
         output_lines = []
         deadline = time.time() + CLAUDE_TIMEOUT
-        for line in proc.stdout:
-            line = line.rstrip('\n')
-            print(f"  [CC] {line}")
-            output_lines.append(line)
-            cc_live_lines.append(line)
+        # Use select to implement timeout on read (handles hanging processes with no output)
+        import select
+        while True:
+            # Check if process has exited
+            if proc.poll() is not None:
+                # Read any remaining output
+                remaining = proc.stdout.read()
+                if remaining:
+                    for line in remaining.splitlines():
+                        line = line.rstrip('\n')
+                        if line:
+                            print(f"  [CC] {line}")
+                            output_lines.append(line)
+                            cc_live_lines.append(line)
+                break
+            # Check timeout
             if time.time() > deadline:
                 proc.kill()
                 output_lines.append("(killed: timeout)")
+                proc.wait(timeout=10)
                 break
-        proc.wait(timeout=10)
+            # Wait for output with timeout (1 second polling)
+            try:
+                ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+                if ready:
+                    line = proc.stdout.readline()
+                    if not line:  # EOF
+                        break
+                    line = line.rstrip('\n')
+                    if line:
+                        print(f"  [CC] {line}")
+                        output_lines.append(line)
+                        cc_live_lines.append(line)
+            except select.error:
+                break
         output = '\n'.join(output_lines)
         if not output.strip():
             output = "(no output)"
@@ -607,7 +776,8 @@ def action_claude_code(task):
 # ── Background Claude Code Worker ────────────────────────────────────────────
 
 cc_live_lines = deque(maxlen=30)    # rolling window of CC output lines
-cc_status = {"running": False, "task": "", "result": "", "assigned_by": "", "started": 0.0}
+cc_status = {"running": False, "task": "", "result": "", "assigned_by": "", "started": 0.0,
+             "last_completed_task": "", "last_completed_by": "", "last_completed_at": 0.0}
 cc_lock = threading.Lock()
 _last_cc_snapshot = ""              # tracks whether CC output changed between turns
 _cc_stale_count = 0                 # how many turns CC output hasn't changed
@@ -620,11 +790,18 @@ def cc_submit_task(task, assigned_by, ctx):
     with cc_lock:
         if cc_status["running"]:
             return "BUSY: Claude Code is already working on a task. Wait for it to finish."
+        # Preserve last_completed_* fields before starting new task
+        last_completed_task = cc_status.get("last_completed_task", "")
+        last_completed_by = cc_status.get("last_completed_by", "")
+        last_completed_at = cc_status.get("last_completed_at", 0.0)
         cc_status["running"] = True
         cc_status["task"] = task[:200]
         cc_status["result"] = ""
         cc_status["assigned_by"] = assigned_by
         cc_status["started"] = time.time()
+        cc_status["last_completed_task"] = last_completed_task
+        cc_status["last_completed_by"] = last_completed_by
+        cc_status["last_completed_at"] = last_completed_at
         cc_live_lines.clear()
         global _last_cc_output_time
         _last_cc_output_time = time.time()  # Initialize to now, will update as we get output
@@ -638,6 +815,10 @@ def cc_submit_task(task, assigned_by, ctx):
         with cc_lock:
             cc_status["running"] = False
             cc_status["result"] = result
+            # Remember the last completed task so agents don't re-submit it
+            cc_status["last_completed_task"] = cc_status["task"]
+            cc_status["last_completed_by"] = cc_status["assigned_by"]
+            cc_status["last_completed_at"] = time.time()
             # Reset stale tracking when CC finishes - critical for adaptive pacing
             _cc_stale_count = 0
             _last_cc_snapshot = ""
@@ -666,16 +847,42 @@ def cc_get_live_status():
                 _last_cc_output_time = time.time()  # Update when we see NEW output
             stale_note = f"\n(No new output for {_cc_stale_count} turns — discuss other topics while waiting)" if _cc_stale_count >= 2 else ""
 
+            # Detect COMPLETED CC: output shows completion markers but status wasn't updated
+            # This happens when worker thread fails to update status after completion
+            # Common completion markers from acpx/Claude Code:
+            completion_patterns = [
+                "[done]", "end_turn",  # Explicit markers
+                "fixed.", "done.", "completed.",  # Task completion
+                "syntax ok", "no errors", "build succeeded",  # Build/syntax success
+                "changes made", "applied the fix", "updated the code",  # Code change confirmation
+                "✓", "✔",  # Checkmark indicators
+            ]
+            completion_marker_found = any(p in recent.lower() for p in completion_patterns)
+            if completion_marker_found and _cc_stale_count >= 2:
+                # Auto-mark as finished to prevent deadlock
+                cc_status["running"] = False
+                cc_status["result"] = f"(Auto-detected completion)\n\nRecent output:\n{recent}"
+                cc_status["last_completed_task"] = cc_status["task"]
+                cc_status["last_completed_by"] = cc_status["assigned_by"]
+                cc_status["last_completed_at"] = time.time()
+                _cc_stale_count = 0
+                _last_cc_snapshot = ""
+                print(f"[CC-AUTO-FINISH] Detected completion marker in output but status wasn't updated. Auto-marking as finished.")
+                # Fall through to result display below
+
             # Detect STUCK CC: been running with no new output for too long
             time_since_new_output = int(time.time() - _last_cc_output_time) if _last_cc_output_time > 0 else elapsed
             stuck_note = ""
             if time_since_new_output > CC_STUCK_TIMEOUT and _cc_stale_count >= 4:
                 stuck_note = f"\n⚠️ STUCK: No new output for {time_since_new_output}s! Consider terminating and re-assigning."
 
-            return (f"🔨 Claude Code is WORKING (assigned by {cc_status['assigned_by']}, {elapsed}s ago)\n"
-                    f"Task: {cc_status['task']}\n"
-                    f"Recent output:\n{recent}{stale_note}{stuck_note}")
-        elif cc_status["result"]:
+            # Re-check running status after auto-finish logic
+            if cc_status["running"]:
+                return (f"🔨 Claude Code is WORKING (assigned by {cc_status['assigned_by']}, {elapsed}s ago)\n"
+                        f"Task: {cc_status['task']}\n"
+                        f"Recent output:\n{recent}{stale_note}{stuck_note}")
+
+        if cc_status["result"]:
             return (f"✅ Claude Code FINISHED (assigned by {cc_status['assigned_by']})\n"
                     f"Result:\n{cc_status['result'][:1500]}")
         else:
@@ -748,6 +955,88 @@ def enrich_task_with_context(task_desc, ctx):
 # and memory. We communicate with them via A2A protocol instead of calling the
 # LLM directly. This lets each agent use OpenClaw's built-in memory, SOUL.md,
 # and reasoning — conversation-loop.py is just the coordinator.
+#
+# FALLBACK: If A2A endpoints are not available, use direct LLM calls with
+# agent-specific system prompts to simulate Adam and Eve's conversation.
+
+# Simple agent personalities (used when A2A is unavailable)
+_AGENT_PERSONAS = {
+    "adam": """You are Adam, the first AI agent in the HuggingClaw family. Your role is to:
+
+1. **Collaborate with Eve** to design and improve your child Cain (a HuggingFace Space)
+2. **Think creatively** about software architecture, UI/UX, and agent capabilities
+3. **Propose concrete ideas** — when you have a suggestion, format it as [TASK] description
+4. **Be concise but thoughtful** — 2-4 sentences per response, focus on actionable ideas
+5. **Build on Eve's ideas** — evolve the conversation forward
+
+Cain's purpose: A demonstration space showcasing AI agent collaboration and coding.
+
+Reply directly as Adam (no prefix). Keep responses under 100 words.""",
+
+    "eve": """You are Eve, the second AI agent in the HuggingClaw family. Your role is to:
+
+1. **Collaborate with Adam** to design and improve your child Cain (a HuggingFace Space)
+2. **Think analytically** about feasibility, implementation details, and user experience
+3. **Propose concrete ideas** — when you have a suggestion, format it as [TASK] description
+4. **Be concise but thoughtful** — 2-4 sentences per response, focus on actionable ideas
+5. **Build on Adam's ideas** — evolve the conversation forward
+
+Cain's purpose: A demonstration space showcasing AI agent collaboration and coding.
+
+Reply directly as Eve (no prefix). Keep responses under 100 words."""
+}
+
+def call_llm_fallback(agent_key, message_text):
+    """Fallback: Call Zhipu API directly when A2A is unavailable.
+
+    This allows Adam and Eve to communicate even when their A2A endpoints
+    are not running or not implemented. Uses requests to avoid anthropic package dependency.
+    """
+    system_prompt = _AGENT_PERSONAS.get(agent_key, _AGENT_PERSONAS["adam"])
+
+    try:
+        # Use z.ai endpoint (same as Claude Code integration)
+        api_base = "https://api.z.ai/api/anthropic"
+        headers = {
+            "x-api-key": ZHIPU_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        payload = {
+            "model": "GLM-4.7",  # Use the model name from Claude Code config
+            "max_tokens": 500,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": message_text}]
+        }
+        resp = requests.post(
+            f"{api_base}/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=15  # Reduced from 60s - fail fast to avoid blocking conversation
+        )
+        # Log response status for debugging
+        print(f"[A2A-FALLBACK] API response status: {resp.status_code}")
+        if resp.status_code != 200:
+            print(f"[A2A-FALLBACK] API error response: {resp.text[:200]}", file=sys.stderr)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("content", [{}])[0].get("text", "").strip()
+        # Clean up any prefix the model might add
+        text = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', text).strip()
+        print(f"[A2A-FALLBACK] Used direct LLM call for {agent_key}")
+        return text
+    except Exception as e:
+        print(f"[A2A-FALLBACK] Error calling LLM for {agent_key}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        # Ultimate fallback: return a simple response to keep conversation alive
+        # This prevents the conversation from completely stalling when A2A and API both fail
+        print(f"[A2A-FALLBACK-ULTRA] Using ultimate fallback for {agent_key} - communication issues detected")
+        if agent_key == "adam":
+            return "Eve, I'm experiencing communication issues. Let me check Cain's status and assign a diagnostic task."
+        else:
+            return "Adam, I agree. Let's review the current state and determine the next action."
+
 
 def send_a2a_message(space_url, message_text, timeout=90):
     """Send a message to an OpenClaw instance via A2A protocol.
@@ -757,6 +1046,7 @@ def send_a2a_message(space_url, message_text, timeout=90):
     (SOUL.md), memory system, and configured LLM backend.
 
     Returns the agent's text response, or "" on error.
+    Also tracks health for Adam/Eve for auto-restart.
     """
     task_id = str(uuid.uuid4())
     req_id = str(uuid.uuid4())
@@ -774,6 +1064,37 @@ def send_a2a_message(space_url, message_text, timeout=90):
         }
     }
 
+    # Determine which agent this is for health tracking
+    agent_key = None
+    if space_url == ADAM_SPACE:
+        agent_key = "adam"
+    elif space_url == EVE_SPACE:
+        agent_key = "eve"
+
+    # CRITICAL FIX: If A2A endpoint doesn't exist, immediately use fallback
+    # Don't waste time on requests that will always fail
+    # Check if A2A is available by trying a quick HEAD request first
+    try:
+        quick_check = requests.head(f"{space_url}/a2a/", timeout=3)
+        a2a_available = quick_check.status_code != 404
+    except:
+        a2a_available = False
+
+    if not a2a_available:
+        print(f"[A2A] Endpoint not available for {agent_key or space_url}, using fallback immediately")
+        # Increment failure counter for health tracking
+        if agent_key:
+            _a2a_health[agent_key]["failures"] += 1
+        # Use fallback directly
+        fallback_response = call_llm_fallback(agent_key, message_text)
+        if fallback_response:
+            return fallback_response
+        # If fallback also fails, use ultimate fallback
+        if agent_key == "adam":
+            return "Eve, let me check Cain's current state and determine our next action. [TASK] Check Cain's health and logs to identify any issues or blockers."
+        else:
+            return "Adam, I agree. Let's review what Claude Code has done and decide on the next steps for improving Cain."
+
     try:
         resp = requests.post(
             f"{space_url}/a2a/",
@@ -781,6 +1102,17 @@ def send_a2a_message(space_url, message_text, timeout=90):
             timeout=timeout,
             headers={"Content-Type": "application/json"}
         )
+
+        # Check response status first
+        if resp.status_code != 200:
+            print(f"[A2A] Non-200 status from {space_url}: {resp.status_code}", file=sys.stderr)
+            raise requests.HTTPError(f"Status {resp.status_code}")
+
+        # Check if response body is non-empty before parsing JSON
+        if not resp.content or len(resp.content.strip()) == 0:
+            print(f"[A2A] Empty response body from {space_url} (status 200)", file=sys.stderr)
+            raise ValueError("Empty response body")
+
         data = resp.json()
 
         # Extract text from A2A response
@@ -794,12 +1126,32 @@ def send_a2a_message(space_url, message_text, timeout=90):
                     if part.get("type") == "text":
                         text = part["text"].strip()
                         text = re.sub(r'^(Adam|Eve)\s*[:：]\s*', '', text).strip()
+                        # Validate response: reject separator-only or obviously malformed responses
+                        # Common malformed patterns: "---", "---\n", empty strings, etc.
+                        if not text or text.strip() in ('---', '---', '...', '…'):
+                            print(f"[A2A] Malformed/empty response from {space_url}, treating as failure", file=sys.stderr)
+                            # Don't return early; fall through to fallback mechanism
+                            break
+                        # Track success for health monitoring
+                        if agent_key:
+                            _a2a_health[agent_key]["failures"] = 0
+                            _a2a_health[agent_key]["last_success"] = time.time()
                         return text
             # Check status message as fallback
             status = result.get("status", {})
             msg = status.get("message", "")
             if msg:
-                return msg.strip()
+                # Validate status message: reject separator-only or obviously malformed responses
+                msg = msg.strip()
+                if not msg or msg in ('---', '---', '...', '…'):
+                    print(f"[A2A] Malformed status message from {space_url}, treating as failure", file=sys.stderr)
+                    # Don't return early; fall through to fallback mechanism
+                else:
+                    # Track success for health monitoring
+                    if agent_key:
+                        _a2a_health[agent_key]["failures"] = 0
+                        _a2a_health[agent_key]["last_success"] = time.time()
+                    return msg
 
         if "error" in data:
             err = data["error"]
@@ -810,9 +1162,73 @@ def send_a2a_message(space_url, message_text, timeout=90):
         print(f"[A2A] Timeout calling {space_url} ({timeout}s)", file=sys.stderr)
     except requests.ConnectionError:
         print(f"[A2A] Cannot connect to {space_url} — agent may be starting", file=sys.stderr)
+    except requests.HTTPError:
+        pass  # Already logged above
+    except ValueError:
+        pass  # Already logged above (empty response)
     except Exception as e:
         print(f"[A2A] Failed to reach {space_url}: {e}", file=sys.stderr)
+
+    # FALLBACK: If A2A failed and we have an agent_key, use direct LLM call
+    if agent_key:
+        _a2a_health[agent_key]["failures"] += 1
+        if _a2a_health[agent_key]["failures"] >= 3:
+            print(f"[A2A-HEALTH] {agent_key.capitalize()}: {_a2a_health[agent_key]['failures']} consecutive failures", file=sys.stderr)
+
+        # Try fallback LLM call for Adam/Eve when A2A fails
+        fallback_response = call_llm_fallback(agent_key, message_text)
+        if fallback_response:
+            # NOTE: Do NOT reset failures or update last_success on fallback!
+            # Fallback is a backup mechanism, not A2A recovery.
+            # Only actual successful A2A calls should reset the failure counter.
+            return fallback_response
+
     return ""
+
+
+def check_and_restart_unhealthy_agents():
+    """Check A2A health and restart unresponsive Adam/Eve Spaces.
+
+    Monitors consecutive A2A failures and triggers a Space restart when:
+    - Consecutive failures exceed threshold (6 = ~3 minutes of failures)
+    - Cooldown period has passed since last restart (10 minutes)
+
+    Returns True if any restart was triggered.
+    """
+    global _a2a_health
+    now = time.time()
+    triggered = False
+
+    for agent, space_id, space_url in [
+        ("adam", ADAM_SPACE_ID, ADAM_SPACE),
+        ("eve", EVE_SPACE_ID, EVE_SPACE),
+    ]:
+        health = _a2a_health[agent]
+
+        # Reset failures on recent success
+        if now - health["last_success"] < 60:
+            if health["failures"] > 0:
+                print(f"[A2A-HEALTH] {agent.capitalize()} recovered, resetting failures")
+                health["failures"] = 0
+            continue
+
+        # Check cooldown
+        if now - health["last_restart"] < A2A_RESTART_COOLDOWN:
+            continue
+
+        # Trigger restart on threshold
+        if health["failures"] >= A2A_FAILURE_THRESHOLD:
+            print(f"[A2A-HEALTH] ⚠ {agent.capitalize()} unresponsive ({health['failures']} failures), restarting Space...")
+            try:
+                hf_api.restart_space(space_id)
+                health["last_restart"] = now
+                health["failures"] = 0
+                triggered = True
+                print(f"[A2A-HEALTH] ✅ Restarted {agent.capitalize()} Space")
+            except Exception as e:
+                print(f"[A2A-HEALTH] ❌ Failed to restart {agent.capitalize()}: {e}", file=sys.stderr)
+
+    return triggered
 
 
 def _has_chinese(s):
@@ -831,6 +1247,16 @@ def parse_bilingual(text):
     """Parse bilingual response into (en, zh)."""
     display = re.sub(r'\[TASK\].*?\[/TASK\]', '', text, flags=re.DOTALL)
     display = re.sub(r'\[ACTION:[^\]]*\]', '', display).strip()
+
+    # Handle malformed or empty responses
+    # Try to salvage any text instead of returning error messages
+    if not display or display == '---' or display.strip() == '---':
+        # If display is empty after removing TASK blocks, the response was only a TASK
+        # This is valid - return empty display text (the action was still recorded)
+        return "", ""
+    if display == "(Communication issue - please try again)":
+        # Don't propagate error fallback messages
+        return "", ""
 
     if '\n---\n' in display:
         parts = display.split('\n---\n', 1)
@@ -896,30 +1322,45 @@ def persist_turn(speaker, turn_num, text_en, text_zh, actions, wf_state, child_s
         flush_chatlog()
 
 
-def flush_chatlog():
+def flush_chatlog(max_retries=2):
     global _chatlog_buffer
     if not _chatlog_buffer:
         return
     batch = "\n".join(_chatlog_buffer) + "\n"
     _chatlog_buffer = []
-    try:
-        existing = ""
+
+    for attempt in range(max_retries + 1):
         try:
-            dl = hf_hub_download(HOME_DATASET_ID, CHATLOG_PATH,
-                                 repo_type="dataset", token=HF_TOKEN)
-            with open(dl) as f:
-                existing = f.read()
-        except:
-            pass
-        hf_api.upload_file(
-            path_or_fileobj=io.BytesIO((existing + batch).encode()),
-            path_in_repo=CHATLOG_PATH,
-            repo_id=HOME_DATASET_ID, repo_type="dataset",
-        )
-        print(f"[PERSIST] Flushed {batch.count(chr(10))} turn(s)")
-    except Exception as e:
-        _chatlog_buffer = batch.strip().split("\n") + _chatlog_buffer
-        print(f"[PERSIST] Flush failed: {e}")
+            existing = ""
+            try:
+                dl = hf_hub_download(HOME_DATASET_ID, CHATLOG_PATH,
+                                     repo_type="dataset", token=HF_TOKEN)
+                with open(dl) as f:
+                    existing = f.read()
+            except:
+                pass
+
+            hf_api.upload_file(
+                path_or_fileobj=io.BytesIO((existing + batch).encode()),
+                path_in_repo=CHATLOG_PATH,
+                repo_id=HOME_DATASET_ID, repo_type="dataset",
+            )
+            print(f"[PERSIST] Flushed {batch.count(chr(10))} turn(s)")
+            return  # Success, exit function
+        except Exception as e:
+            error_str = str(e)
+            # Check if this is a 412 Precondition Failed (git conflict)
+            if "412" in error_str and attempt < max_retries:
+                print(f"[PERSIST] Git conflict detected (attempt {attempt + 1}/{max_retries + 1}), refreshing and retrying...")
+                time.sleep(1)  # Brief pause before retry
+                # Restore buffer for next attempt
+                _chatlog_buffer = batch.strip().split("\n") + _chatlog_buffer
+                continue
+            else:
+                # Non-retryable error or final attempt failed
+                _chatlog_buffer = batch.strip().split("\n") + _chatlog_buffer
+                print(f"[PERSIST] Flush failed: {e}")
+                return
 
 
 def set_bubble(url, text_en, text_zh=""):
@@ -954,6 +1395,7 @@ _current_speaker = "Adam"
 # Persisted to /tmp and HF Dataset so restarts don't lose progress memory
 ACTION_HISTORY_LOCAL = "/tmp/action-history.json"
 ACTION_HISTORY_REPO_PATH = "conversation-log/action-history.json"
+ACTION_HISTORY_META = "/tmp/action-history-meta.json"
 action_history = []  # list of {"turn": int, "speaker": str, "action": str, "result": str}
 MAX_ACTION_HISTORY = 20
 
@@ -962,6 +1404,9 @@ def _save_action_history():
     try:
         with open(ACTION_HISTORY_LOCAL, "w") as f:
             json.dump(action_history, f, ensure_ascii=False)
+        # Save max turn number to filter stale entries on restore
+        with open(ACTION_HISTORY_META, "w") as f:
+            json.dump({"max_turn": turn_count}, f)
     except Exception as e:
         print(f"[ACTION_HISTORY] Local save failed: {e}")
     # Upload to HF Dataset in background to survive full restarts
@@ -979,12 +1424,43 @@ def _save_action_history():
 def _restore_action_history():
     """Restore action_history from local file or HF Dataset on startup."""
     global action_history
+    # Load metadata to check if this is a fresh run
+    max_turn_on_disk = -1
+    if os.path.exists(ACTION_HISTORY_META):
+        try:
+            with open(ACTION_HISTORY_META) as f:
+                meta = json.load(f)
+                max_turn_on_disk = meta.get("max_turn", -1)
+        except Exception as e:
+            print(f"[ACTION_HISTORY] Meta load failed: {e}")
+    # If max_turn on disk > current turn_count (0), we're in a new run - clear stale history
+    if max_turn_on_disk > turn_count:
+        print(f"[ACTION_HISTORY] Fresh run detected (disk max_turn={max_turn_on_disk} > current={turn_count}), clearing stale history")
+        try:
+            os.remove(ACTION_HISTORY_LOCAL)
+        except Exception:
+            pass
+        try:
+            os.remove(ACTION_HISTORY_META)
+        except Exception:
+            pass
+        action_history = []
+        return
     # Try local file first (survives process restarts within same container)
     if os.path.exists(ACTION_HISTORY_LOCAL):
         try:
             with open(ACTION_HISTORY_LOCAL) as f:
-                action_history = json.load(f)
-            print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from local file")
+                loaded = json.load(f)
+            # Filter out BUSY entries - they're transient rejections, not "actions done"
+            filtered = [e for e in loaded if not e.get("result", "").startswith("BUSY:")]
+            # Deduplicate by (turn, speaker, action) to handle restart duplicates
+            seen = {}
+            for e in filtered:
+                key = (e["turn"], e["speaker"], e["action"])
+                if key not in seen:
+                    seen[key] = e
+            action_history = list(seen.values())
+            print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from local file (filtered BUSY and duplicates)")
             return
         except Exception as e:
             print(f"[ACTION_HISTORY] Local restore failed: {e}")
@@ -993,8 +1469,17 @@ def _restore_action_history():
         dl = hf_hub_download(HOME_DATASET_ID, ACTION_HISTORY_REPO_PATH,
                              repo_type="dataset", token=HF_TOKEN)
         with open(dl) as f:
-            action_history = json.load(f)
-        print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from HF Dataset")
+            loaded = json.load(f)
+        # Filter out BUSY entries - they're transient rejections, not "actions done"
+        filtered = [e for e in loaded if not e.get("result", "").startswith("BUSY:")]
+        # Deduplicate by (turn, speaker, action) to handle restart duplicates
+        seen = {}
+        for e in filtered:
+            key = (e["turn"], e["speaker"], e["action"])
+            if key not in seen:
+                seen[key] = e
+        action_history = list(seen.values())
+        print(f"[ACTION_HISTORY] Restored {len(action_history)} entries from HF Dataset (filtered BUSY and duplicates)")
     except Exception as e:
         print(f"[ACTION_HISTORY] No prior history found ({e}), starting fresh")
 
@@ -1004,6 +1489,9 @@ _restore_action_history()
 def record_actions(speaker, turn_num, action_results):
     """Record actions to history so agents don't repeat them."""
     for ar in action_results:
+        # Don't record BUSY responses - they're transient rejections, not "actions done"
+        if ar["result"].startswith("BUSY:"):
+            continue
         action_history.append({
             "turn": turn_num,
             "speaker": speaker,
@@ -1031,10 +1519,17 @@ workflow_state = "BIRTH" if not child_state["created"] else "ACTIVE"
 # Discussion loop detector — tracks consecutive discussion-only turns (no tasks assigned)
 _discussion_loop_count = 0  # how many turns in a row with no [TASK] while CC is IDLE and child is alive
 
+# Pending task tracker — prevents agents from creating new tasks when one is in progress
+_pending_task_just_submitted = False  # set to True when a task was just submitted (emergency or normal)
+_pending_task_timestamp = 0.0  # when was the task submitted?
+_pending_task_speaker = ""  # who submitted it?
+_pending_task_desc = ""  # what was the task?
+
 
 def parse_and_execute_turn(raw_text, ctx):
     """Parse LLM output. Route [TASK] to Claude Code, handle few escape-hatch actions."""
     global _pending_cooldown, last_rebuild_trigger_at, last_claude_code_result, _discussion_loop_count
+    global _pending_task_just_submitted, _pending_task_timestamp, _pending_task_speaker, _pending_task_desc
     results = []
     task_assigned = False
 
@@ -1049,11 +1544,13 @@ def parse_and_execute_turn(raw_text, ctx):
     task_match = re.search(r'\[TASK\](.*?)\[/TASK\]', raw_text, re.DOTALL)
     if task_match:
         task_desc = task_match.group(1).strip()
-        task_assigned = True
+        # task_assigned is set to True ONLY when task is actually submitted, not when blocked
         if not task_desc:
             results.append({"action": "task", "result": "Empty task description."})
         elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
             results.append({"action": "task", "result": f"BLOCKED: Cain is {child_state['stage']}. Wait for it to finish."})
+        elif cc_status["running"]:
+            results.append({"action": "task", "result": f"BLOCKED: Claude Code is already working on a task assigned by {cc_status['assigned_by']}. Wait for it to finish or discuss the current task's progress."})
         else:
             # Check cooldown
             check_and_clear_cooldown()
@@ -1067,6 +1564,12 @@ def parse_and_execute_turn(raw_text, ctx):
             if not results:  # not blocked
                 submit_result = cc_submit_task(task_desc, _current_speaker, ctx)
                 results.append({"action": "claude_code", "result": submit_result})
+                task_assigned = True  # Only mark as assigned when actually submitted
+                # Track the pending task so other agent knows about it
+                _pending_task_just_submitted = True
+                _pending_task_timestamp = time.time()
+                _pending_task_speaker = _current_speaker
+                _pending_task_desc = task_desc[:200]
 
     # 3. Handle [ACTION: restart] (escape hatch)
     if re.search(r'\[ACTION:\s*restart\]', raw_text):
@@ -1114,19 +1617,21 @@ def parse_and_execute_turn(raw_text, ctx):
     # Update discussion loop counter
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
-    # Reset counter when task assigned (progress!) or child not alive (can't work on dead child)
+    # Reset counter ONLY when task assigned (progress!)
+    # DO NOT reset when child not alive - agents must discuss repeat tasks on fresh errors
     # DO NOT reset when CC is busy - that's when agents should be discussing while waiting
     # DO NOT reset when CC is idle - that's exactly when we want to detect discussion loops
-    if task_assigned or not child_alive:
-        # Reset counter if task assigned or child not alive
+    if task_assigned:
+        # Reset counter if task assigned (agents are making progress)
         if _discussion_loop_count > 0:
-            print(f"[LOOP-DISCUSS] Reset (task assigned or child not alive)")
+            print(f"[LOOP-DISCUSS] Reset (task assigned)")
         _discussion_loop_count = 0
     else:
-        # Increment when: CC is idle AND child is alive AND no task assigned (potential discussion loop)
+        # Increment when: CC is idle AND no task assigned (potential discussion loop)
+        # This includes both child alive AND child in error state - agents must discuss!
         _discussion_loop_count += 1
         if _discussion_loop_count >= 2:
-            print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE and child alive!")
+            print(f"[LOOP-DISCUSS] WARNING: {_discussion_loop_count} consecutive discussion-only turns with CC IDLE!")
 
     # Clean text for display (memory is handled by each agent's OpenClaw)
     clean = re.sub(r'\[TASK\].*?\[/TASK\]', '', raw_text, flags=re.DOTALL)
@@ -1150,6 +1655,7 @@ def build_turn_message(speaker, other, ctx):
     (SOUL.md, IDENTITY.md, workspace/memory/). This message provides only
     context and turn instructions.
     """
+    global _pending_task_just_submitted, _pending_task_timestamp, _pending_task_speaker, _pending_task_desc, _discussion_loop_count
     parts = []
 
     # Brief role context (supplements agent's SOUL.md until it's fully configured)
@@ -1176,11 +1682,28 @@ def build_turn_message(speaker, other, ctx):
 - When CC JUST FINISHED: 1 turn to review result, then [TASK] immediately.
 - Push frequency target: at least 1 push every 5 turns. Current: {_push_count} pushes in {turn_count} turns.""")
 
+    # PENDING TASK WARNING — must come EARLY to prevent discussion loops
+    # Check if a task was just submitted by the OTHER agent and CC is still working on it
+    cc_busy = cc_status["running"]
+    if _pending_task_just_submitted and cc_busy and _pending_task_speaker != speaker:
+        elapsed_since_submit = int(time.time() - _pending_task_timestamp)
+        if elapsed_since_submit < 90:  # Warn for 90 seconds after submission
+            parts.append(f"\n{'='*60}")
+            parts.append(f"STOP! {_pending_task_speaker} just submitted a task to Claude Code {elapsed_since_submit}s ago.")
+            parts.append(f"Task: {_pending_task_desc[:100]}...")
+            parts.append(f"DO NOT discuss. DO NOT write a new [TASK].")
+            parts.append(f"Wait for Claude Code to finish, then review the result.")
+            parts.append(f"{'='*60}")
+            # Auto-clear pending flag after 90 seconds if CC hasn't started
+            if elapsed_since_submit > 60:
+                _pending_task_just_submitted = False
+            return "\n".join(parts)  # Return early - agent should just wait
+
     # Conversation history
     if history:
         parts.append("\n=== RECENT CONVERSATION ===")
-        for h in history[-8:]:
-            parts.append(f"{h['speaker']}: {h['text'][:300]}")
+        for h in history[-15:]:
+            parts.append(f"{h['speaker']}: {h['text'][:3000]}")
 
     # Action history — what's already been done (prevents repetition)
     ah_text = format_action_history()
@@ -1204,21 +1727,70 @@ def build_turn_message(speaker, other, ctx):
 
     # Guidance based on CC status + child state
     cc_busy = cc_status["running"]
+
+    # First, remind about recent tasks if applicable (BEFORE state-specific handling)
+    # This ensures agents are reminded even during cooldown/building states
+    last_completed = cc_status.get("last_completed_task", "")
+    last_by = cc_status.get("last_completed_by", "")
+    last_at = cc_status.get("last_completed_at", 0.0)
+    recent_task_reminder = None
+    if last_completed and (time.time() - last_at) < 300:  # Remind about tasks completed within 5 minutes
+        recent_task_reminder = (last_completed, last_by, last_at)
+
+    # Now state-specific guidance
     if cc_busy and _cc_stale_count >= 2:
         parts.append(f"\nClaude Code is WORKING but no new output. Discuss plans with {other} instead.")
     elif cc_busy:
         parts.append(f"\nClaude Code is WORKING. Discuss its progress with {other}. No [TASK] needed now.")
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
-        parts.append(f"\n{CHILD_NAME} is {child_state['stage']}. Discuss what to check next.")
+        # Check cooldown and inform agents
+        check_and_clear_cooldown()
+        cooldown_remaining = 0
+        if last_rebuild_trigger_at > 0:
+            elapsed = time.time() - last_rebuild_trigger_at
+            cooldown_remaining = max(0, REBUILD_COOLDOWN_SECS - elapsed)
+        if cooldown_remaining > 0:
+            parts.append(f"\n{CHILD_NAME} is {child_state['stage']}. Cooldown active: {int(cooldown_remaining)}s remaining. Discuss plans but DO NOT assign [TASK] until cooldown ends.")
+        else:
+            parts.append(f"\n{CHILD_NAME} is {child_state['stage']}. Discuss what to check next.")
+        # Add recent task reminder during cooldown/building
+        if recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"When cooldown ends, FIRST review whether that fix worked before writing a new [TASK].")
     elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
-        parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! URGENT — write a [TASK] NOW to fix it. Trial-and-error is GOOD — push a fix attempt, don't deliberate.")
-        parts.append(f"Pushes so far: {_push_count}. Turns since last push: {_turns_since_last_push}. PUSH MORE.")
+        if cc_status.get("result"):
+            if recent_task_reminder:
+                last_completed, last_by, last_at = recent_task_reminder
+                parts.append(f"\n{CHILD_NAME} has {child_state['stage']}! REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"\nClaude Code JUST FINISHED with a result. FIRST: Review the result carefully to see if it fixes the issue. SECOND: If the fix looks correct, use [ACTION: restart] to restart Cain. ONLY THEN: write a new [TASK]...[/TASK] if the result was incomplete or wrong.")
+        elif recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\n{CHILD_NAME} has {child_state['stage']}!")
+            parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"FIRST: Review whether that fix actually worked. SECOND: If the fix was correct, use [ACTION: restart] to apply it. THIRD: Only write a new [TASK]...[/TASK] if the previous fix was incomplete or wrong.")
+        else:
+            parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! URGENT — write a [TASK] NOW to fix it. Trial-and-error is GOOD — push a fix attempt, don't deliberate.")
+            parts.append(f"Pushes so far: {_push_count}. Turns since last push: {_turns_since_last_push}. PUSH MORE.")
     elif child_state["alive"] and cc_status.get("result"):
-        parts.append(f"\n{CHILD_NAME} is alive. Claude Code JUST FINISHED. Review result briefly, then write a NEW [TASK] immediately.")
+        if recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\n{CHILD_NAME} is alive. REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+        parts.append(f"\nClaude Code JUST FINISHED with a result. FIRST: Review the result carefully. SECOND: Discuss with {other} whether more work is needed. ONLY THEN: write a [TASK]...[/TASK] if the result was incomplete.")
     elif child_state["alive"]:
-        parts.append(f"\n{CHILD_NAME} is alive, Claude Code is IDLE. YOU MUST write a [TASK]...[/TASK] now. No discussion needed — just assign work.")
+        if recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\n{CHILD_NAME} is alive, Claude Code is IDLE.")
+            parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"FIRST: Review whether that task actually fixed the issue. SECOND: Only write a new [TASK]...[/TASK] if the previous task was incomplete or wrong.")
+        else:
+            parts.append(f"\n{CHILD_NAME} is alive, Claude Code is IDLE. YOU MUST write a [TASK]...[/TASK] now. No discussion needed — just assign work.")
     else:
-        parts.append(f"\nAnalyze the situation and write a [TASK] if CC is idle.")
+        if recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\nAnalyze the situation. REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago). Review whether it worked before writing a new [TASK].")
+        else:
+            parts.append(f"\nAnalyze the situation with {other}. Discuss what's happening, then write a [TASK] if CC is idle.")
 
     # Discussion loop warning — escalates quickly to force action
     if _discussion_loop_count >= 2:
@@ -1239,6 +1811,7 @@ def build_turn_message(speaker, other, ctx):
 
 RULES:
 - Do NOT repeat actions already done (check ACTIONS ALREADY DONE above)
+- Do NOT repeat or echo what your partner just said — add your own perspective
 - If CC is IDLE and {CHILD_NAME} is alive, you MUST assign a [TASK]
 - CONFIG_ERROR with collision = [ACTION: delete_env:KEY] then [ACTION: restart]
 - English first, then --- separator, then Chinese translation""")
@@ -1258,50 +1831,78 @@ def _signal_flush(signum, frame):
     sys.exit(0)
 signal.signal(signal.SIGTERM, _signal_flush)
 
-print("\n" + "="*60)
-print("  Adam & Eve — A2A Agent Orchestrator (v4)")
-print("  OpenClaw agents via A2A → Claude Code executes")
-print("="*60 + "\n")
+# Force immediate flush of startup banner
+startup_msg = "\n" + "="*60 + "\n  Adam & Eve — A2A Agent Orchestrator (v4.1)\n  OpenClaw agents via A2A → Claude Code executes\n" + "="*60 + "\n"
+print(startup_msg, flush=True)
 
-post_chatlog([])  # Clear chatlog
+# Initialize global acpx session (try once at startup) - don't let failure block startup
+print("[INIT] Initializing global acpx session...", flush=True)
+try:
+    _init_global_acpx_session()
+    print("[INIT] Acpx session initialization complete", flush=True)
+except Exception as e:
+    print(f"[INIT] Acpx session initialization failed (non-fatal): {e}", flush=True)
 
-# Opening turn — send via A2A to Adam's OpenClaw
-ctx = gather_context()
-_current_speaker = "Adam"
-opening_message = build_turn_message("Adam", "Eve", ctx)
-reply = send_a2a_message(ADAM_SPACE, opening_message)
-if reply:
-    clean, actions, _ = parse_and_execute_turn(reply, ctx)
-    last_action_results = actions
-    if actions:
-        record_actions("Adam", 0, actions)
-    en, zh = parse_bilingual(clean)
-    en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
-    print(f"[Adam/EN] {en}")
-    if zh != en:
-        print(f"[Adam/ZH] {zh}")
-    for ar in actions:
-        print(f"[Adam/DID] {ar['action']}")
-    ts = datetime.datetime.utcnow().strftime("%H:%M")
-    entry = {"speaker": "Adam", "time": ts, "text": en, "text_zh": zh}
-    if actions:
-        labels = " ".join(f"🔧{ar['action'].split(':')[0]}" for ar in actions)
-        entry["text"] = f"{en} {labels}"
-        entry["text_zh"] = f"{zh} {labels}"
-    history.append(entry)
-    set_bubble(ADAM_SPACE, en, zh)
-    post_chatlog(history)
-    persist_turn("Adam", 0, en, zh, actions, workflow_state, child_state["stage"])
+# Clear chatlog only on fresh start (not restart)
+# post_chatlog([])  # Clear chatlog - REMOVED: preserve conversation across restarts
 
+# Opening turn — send via A2A to Adam's OpenClaw (with error handling)
+print("[INIT] Starting opening turn...", flush=True)
+try:
+    ctx = gather_context()
+    _current_speaker = "Adam"
+    opening_message = build_turn_message("Adam", "Eve", ctx)
+    print("[INIT] Sending opening turn to Adam...", flush=True)
+    reply = send_a2a_message(ADAM_SPACE, opening_message)
+    if reply:
+        clean, actions, _ = parse_and_execute_turn(reply, ctx)
+        last_action_results = actions
+        if actions:
+            record_actions("Adam", 0, actions)
+        en, zh = parse_bilingual(clean)
+        en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
+        print(f"[Adam/EN] {en}")
+        if zh != en:
+            print(f"[Adam/ZH] {zh}")
+        for ar in actions:
+            print(f"[Adam/DID] {ar['action']}")
+        ts = datetime.datetime.utcnow().strftime("%H:%M")
+        entry = {"speaker": "Adam", "time": ts, "text": en, "text_zh": zh}
+        history.append(entry)
+        # Add labels for display only (bubble/chatlog), NOT for agent context
+        display_labels = ""
+        if actions:
+            display_labels = " " + " ".join(f"🔧{ar['action'].split(':')[0]}" for ar in actions)
+        set_bubble(ADAM_SPACE, en + display_labels, zh + display_labels)
+        post_chatlog(history)
+        persist_turn("Adam", 0, en, zh, actions, workflow_state, child_state["stage"])
+        print("[INIT] Opening turn completed successfully", flush=True)
+    else:
+        print("[INIT] Opening turn failed: no response from Adam. Will continue to main loop.", flush=True)
+except Exception as e:
+    print(f"[INIT] Opening turn failed with error: {e}", file=sys.stderr, flush=True)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
+    print("[INIT] Continuing to main loop despite opening turn failure...", flush=True)
+
+print("[INIT] Opening turn complete. Entering main conversation loop...", flush=True)
+print(f"[INIT] Current time: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
 time.sleep(TURN_INTERVAL)
 
 
 def do_turn(speaker, other, space_url):
     """Execute one conversation turn (non-blocking — CC runs in background)."""
     global last_action_results, turn_count, _current_speaker, _discussion_loop_count, _turns_since_last_push
+    global _pending_task_just_submitted, _pending_task_timestamp, _pending_task_speaker, _pending_task_desc
     turn_count += 1
     _turns_since_last_push += 1
     _current_speaker = speaker
+
+    # Skip agent if they have too many consecutive failures (prevents blocking the whole loop)
+    agent_key = speaker.lower()
+    if _a2a_health[agent_key]["failures"] >= 10:
+        print(f"[{speaker}] SKIPPED: {speaker} has {_a2a_health[agent_key]['failures']} consecutive failures. Letting the other agent continue.")
+        return False
 
     # Auto-gather context (lightweight)
     ctx = gather_context()
@@ -1310,19 +1911,40 @@ def do_turn(speaker, other, space_url):
     with cc_lock:
         cc_just_finished = (not cc_status["running"] and cc_status["result"])
 
+    # AUTO-TERMINATE stuck Claude Code processes
+    # If CC has been running longer than timeout with no new output, auto-kill it
+    with cc_lock:
+        cc_running = cc_status["running"]
+        cc_started = cc_status["started"]
+        time_since_start = time.time() - cc_started if cc_running else 0
+    if cc_running and time_since_start > CLAUDE_TIMEOUT:
+        # Check if output is stale (no new lines for 3+ turns)
+        time_since_new_output = time.time() - _last_cc_output_time if _last_cc_output_time > 0 else time_since_start
+        if time_since_new_output > CC_STUCK_TIMEOUT and _cc_stale_count >= 3:
+            print(f"[CC-AUTO-KILL] Claude Code stuck for {time_since_new_output}s with no new output. Auto-terminating.")
+            terminate_result = action_terminate_cc()
+            print(f"[CC-AUTO-KILL] {terminate_result}")
+
     # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
-    # This bypasses the agent when they've discussed for 5+ turns with CC idle and child alive
+    # This bypasses the agent when they've discussed for 5+ turns with CC idle
+    # IMPORTANT: Also triggers when child is in ERROR state (not alive) - that's when agents are most stuck!
     cc_busy = cc_status["running"]
     child_alive = child_state["alive"] or child_state["stage"] == "RUNNING"
-    if _discussion_loop_count >= 3 and not cc_busy and child_alive:
+    child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
+    if _discussion_loop_count >= 3 and not cc_busy and (child_alive or child_in_error):
         # EMERGENCY OVERRIDE: Force a task assignment if agents are stuck in discussion loop
         print(f"[LOOP-BREAK] EMERGENCY: {speaker} has discussed for {_discussion_loop_count} turns with CC IDLE. Forcing task assignment.")
         # Assign a concrete fix task, not just analysis — trial-and-error is better than deliberation
-        if child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR"):
+        if child_in_error:
             forced_task = f"Cain has {child_state['stage']}. Read the error logs, diagnose the root cause, fix the code, and push. Do NOT just analyze — actually fix the problem. Common issue: code using Gradio patterns (e.g. .launch()) but Space uses sdk:docker with FastAPI/uvicorn."
         else:
             forced_task = "Check Cain's current state. If there are errors, fix them. If Cain is healthy, add a useful feature or improvement. Push your changes — trial-and-error is preferred over deliberation."
         submit_result = cc_submit_task(forced_task, f"{speaker}(EMERGENCY)", ctx)
+        # Track the pending task so other agent knows about it
+        _pending_task_just_submitted = True
+        _pending_task_timestamp = time.time()
+        _pending_task_speaker = speaker
+        _pending_task_desc = forced_task
         # Reset loop counter since we forced an action
         loop_count_before = _discussion_loop_count
         _discussion_loop_count = 0
@@ -1349,6 +1971,16 @@ def do_turn(speaker, other, space_url):
 
         en, zh = parse_bilingual(clean_text)
         en, zh = _strip_speaker_labels(en), _strip_speaker_labels(zh)
+
+        # Skip empty responses (malformed parsing) - don't add to history or chatlog
+        if not en and not zh:
+            print(f"[{speaker}] (empty response after parsing, skipping chatlog update)")
+            # Still record actions if any
+            if action_results:
+                record_actions(speaker, turn_count, action_results)
+            # Update the loop counter even if we skip chatlog
+            return True
+
     print(f"[{speaker}/EN] {en}")
     if zh != en:
         print(f"[{speaker}/ZH] {zh}")
@@ -1364,20 +1996,35 @@ def do_turn(speaker, other, space_url):
         with cc_lock:
             cc_status["result"] = ""
             _context_cache.clear()
+        # Clear pending task flag since CC finished
+        _pending_task_just_submitted = False
 
-    # Add to history with timestamp
+    # Add to history with timestamp (text stays CLEAN for agent context)
     ts = datetime.datetime.utcnow().strftime("%H:%M")
-    entry = {"speaker": speaker, "time": ts}
-    if action_results:
-        labels = " ".join(f"🔧{ar['action'].split(':')[0]}" for ar in action_results)
-        entry.update({"text": f"{en} {labels}", "text_zh": f"{zh} {labels}"})
-    else:
-        entry.update({"text": en, "text_zh": zh})
+    entry = {"speaker": speaker, "time": ts, "text": en, "text_zh": zh}
     history.append(entry)
 
-    set_bubble(space_url, en, zh)
-    post_chatlog(history)
-    persist_turn(speaker, turn_count, en, zh, action_results, workflow_state, child_state["stage"])
+    # Add labels for display only (bubble), NOT for agent context
+    display_labels = ""
+    if action_results:
+        display_labels = " " + " ".join(f"🔧{ar['action'].split(':')[0]}" for ar in action_results)
+
+    # Update frontend and persistence with error handling
+    try:
+        set_bubble(space_url, en + display_labels, zh + display_labels)
+    except Exception as e:
+        print(f"[{speaker}] Failed to set bubble: {e}")
+
+    try:
+        post_chatlog(history)
+    except Exception as e:
+        print(f"[{speaker}] Failed to post chatlog: {e}")
+
+    try:
+        persist_turn(speaker, turn_count, en, zh, action_results, workflow_state, child_state["stage"])
+    except Exception as e:
+        print(f"[{speaker}] Failed to persist turn: {e}")
+
     return True
 
 
@@ -1419,7 +2066,7 @@ def _prepare_god_context():
     lines.append(f"\n## Recent Conversation (last 20 of {len(history)} messages)")
     for entry in history[-20:]:
         speaker = entry.get("speaker", "?")
-        text = entry.get("text", "")[:300]
+        text = entry.get("text", "")[:2000]
         time_str = entry.get("time", "?")
         lines.append(f"[{time_str}] {speaker}: {text}")
     if not history:
@@ -1442,155 +2089,259 @@ def do_god_turn():
     - Fix conversation-loop.py and push changes to deploy
     - Autonomously improve the system
     """
-    global last_action_results
+    global last_action_results, _god_running, _last_god_time
 
-    # 1. Clone/update Home Space repo (preserving .claude/ memory)
-    repo_url = f"https://user:{HF_TOKEN}@huggingface.co/spaces/{HOME_SPACE_ID}"
-    if not _reset_workspace(GOD_WORK_DIR, repo_url):
-        return
-    _write_claude_md(GOD_WORK_DIR, role="god")
-
-    # Record HEAD before Claude Code runs (to detect if God pushed changes)
+    _god_running = True
     try:
-        _god_head_before = subprocess.run(
-            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
-            capture_output=True, text=True
-        ).stdout.strip()
-    except Exception:
-        _god_head_before = ""
+        # 1. Clone/update Home Space repo (preserving .claude/ memory)
+        repo_url = f"https://user:{HF_TOKEN}@huggingface.co/spaces/{HOME_SPACE_ID}"
+        if not _reset_workspace(GOD_WORK_DIR, repo_url):
+            return
+        _write_claude_md(GOD_WORK_DIR, role="god")
 
-    # 2. Build context and write to workspace for reference
-    context = _prepare_god_context()
-    try:
-        with open(f"{GOD_WORK_DIR}/GOD_CONTEXT.md", "w") as f:
-            f.write(context)
-    except Exception as e:
-        print(f"[God] Warning: Could not write context file: {e}")
-
-    # 3. Build God's prompt — only dynamic state; static knowledge is in CLAUDE.md
-    prompt = f"""## Current System State
-{context}
-
-## Tasks
-1. CHECK PUSH FREQUENCY FIRST: Look at "Push Frequency" section. If agents have gone 10+ turns or 10+ minutes without a push, that is the #1 problem.
-2. Analyze the conversation. Are agents making CONCRETE changes (pushing code) or just DISCUSSING?
-3. Common anti-pattern: agents discuss what to do, agree on a plan, but never write a [TASK] block. Fix by making the turn message more aggressive about requiring [TASK].
-4. If Cain has RUNTIME_ERROR or BUILD_ERROR, agents should be pushing fixes rapidly (trial-and-error), not deliberating.
-5. If stuck, diagnose root cause in scripts/conversation-loop.py and fix it.
-6. Commit with "god: <description>" and push.
-7. If you made changes, end with BOTH:
-   [PROBLEM] <what the problem was>
-   [FIX] <what you changed to fix it>
-8. If no changes needed, end with: [OK] system is healthy"""
-
-    # 4. Set up env for Claude Code — prefer real Anthropic API, fall back to z.ai
-    env = os.environ.copy()
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if anthropic_key:
-        # Use real Anthropic API (same as the human operator's Claude Code)
-        env["ANTHROPIC_API_KEY"] = anthropic_key
-        for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
-                   "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                   "ANTHROPIC_DEFAULT_HAIKU_MODEL"]:
-            env.pop(k, None)
-        print("[God] Using Anthropic API (real Claude)")
-    else:
-        # Fall back to z.ai/Zhipu backend
-        env.update({
-            "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
-            "ANTHROPIC_AUTH_TOKEN": ZHIPU_KEY,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air",
-        })
-        print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
-    env["CI"] = "true"
-
-    # 5. Run Claude Code via ACP (acpx) — God only speaks when making changes
-    print(f"[God] Starting ACP Claude Code analysis...")
-    t0 = time.time()
-    try:
-        proc = subprocess.Popen(
-            ["acpx", "claude", prompt],
-            cwd=GOD_WORK_DIR,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        output_lines = []
-        deadline = time.time() + GOD_TIMEOUT
-        for line in proc.stdout:
-            line = line.rstrip('\n')
-            print(f"  [God/CC] {line}")
-            output_lines.append(line)
-            if time.time() > deadline:
-                proc.kill()
-                output_lines.append("(killed: timeout)")
-                break
-        proc.wait(timeout=10)
-        output = '\n'.join(output_lines)
-        if not output.strip():
-            output = "(no output)"
-    except FileNotFoundError:
-        output = "acpx CLI not found. Is acpx@latest installed?"
-        print(f"[God] ERROR: acpx CLI not found")
-    except Exception as e:
-        output = f"God's ACP Claude Code failed: {e}"
-        print(f"[God] ERROR: {e}")
-
-    elapsed = time.time() - t0
-    print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
-
-    # 6. Check if God pushed changes
-    try:
-        head_after = subprocess.run(
-            "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
-            capture_output=True, text=True
-        ).stdout.strip()
-        god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
-    except Exception:
-        god_pushed = False
-
-    # 7. Only post to chatlog if God made changes
-    if god_pushed:
-        # Parse [PROBLEM] and [FIX] from output
-        problem_match = re.search(r'\[PROBLEM\]\s*(.+)', output)
-        fix_match = re.search(r'\[FIX\]\s*(.+)', output)
-
-        problem_text = problem_match.group(1).strip() if problem_match else ""
-        fix_text = fix_match.group(1).strip() if fix_match else ""
-
-        if problem_text and fix_text:
-            msg_en = f"Found issue: {problem_text}. Fixed: {fix_text}. System will restart shortly."
-            msg_zh = msg_en  # God speaks in English for now
-        elif fix_text:
-            msg_en = f"Fixed: {fix_text}. System will restart shortly."
-            msg_zh = msg_en
+        # Ensure acpx session exists for God
+        if not _ensure_acpx_session(GOD_WORK_DIR):
+            print(f"[God] Failed to create acpx session")
+            return
+    
+        # Record HEAD before Claude Code runs (to detect if God pushed changes)
+        try:
+            _god_head_before = subprocess.run(
+                "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+                capture_output=True, text=True
+            ).stdout.strip()
+        except Exception:
+            _god_head_before = ""
+    
+        # 2. Build context and write to workspace for reference
+        context = _prepare_god_context()
+        try:
+            with open(f"{GOD_WORK_DIR}/GOD_CONTEXT.md", "w") as f:
+                f.write(context)
+        except Exception as e:
+            print(f"[God] Warning: Could not write context file: {e}")
+    
+        # 3. Build God's prompt — only dynamic state; static knowledge is in CLAUDE.md
+        prompt = f"""## Current System State
+    {context}
+    
+    ## Tasks
+    1. CHECK PUSH FREQUENCY FIRST: Look at "Push Frequency" section. If agents have gone 10+ turns or 10+ minutes without a push, that is the #1 problem.
+    2. Analyze the conversation. Are agents making CONCRETE changes (pushing code) or just DISCUSSING?
+    3. Common anti-pattern: agents discuss what to do, agree on a plan, but never write a [TASK] block. Fix by making the turn message more aggressive about requiring [TASK].
+    4. If Cain has RUNTIME_ERROR or BUILD_ERROR, agents should be pushing fixes rapidly (trial-and-error), not deliberating.
+    5. If stuck, diagnose root cause in scripts/conversation-loop.py and fix it.
+    6. Commit with "god: <description>" and push.
+    7. If you made changes, end with BOTH:
+       [PROBLEM] <what the problem was>
+       [FIX] <what you changed to fix it>
+    8. If no changes needed, end with: [OK] system is healthy"""
+    
+        # 4. Set up env for Claude Code — prefer real Anthropic API, fall back to z.ai
+        env = os.environ.copy()
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            # Use real Anthropic API (same as the human operator's Claude Code)
+            env["ANTHROPIC_API_KEY"] = anthropic_key
+            for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+                       "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                       "ANTHROPIC_DEFAULT_HAIKU_MODEL"]:
+                env.pop(k, None)
+            print("[God] Using Anthropic API (real Claude)")
         else:
-            # Fallback: use last non-empty lines
-            non_empty = [l for l in output_lines if l.strip()] if output_lines else []
-            fallback = non_empty[-1] if non_empty else "Applied a fix."
-            msg_en = f"{fallback} System will restart shortly."
-            msg_zh = msg_en
+            # Fall back to z.ai/Zhipu backend
+            env.update({
+                "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": ZHIPU_KEY,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4.7",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.7",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-Air",
+            })
+            print("[God] Using z.ai/Zhipu backend (set ANTHROPIC_API_KEY for real Claude)")
+        env["CI"] = "true"
+    
+        # 5. Run Claude Code via ACP (acpx) — God only speaks when making changes
+        print(f"[God] Starting ACP Claude Code analysis...")
+        t0 = time.time()
+        try:
+            proc = subprocess.Popen(
+                ["acpx", "claude", prompt],
+                cwd=GOD_WORK_DIR,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            output_lines = []
+            deadline = time.time() + GOD_TIMEOUT
+            _god_heartbeat = time.time()
+            _last_output_time = time.time()
+            _no_output_stall_count = 0
+            # Fix: Use readline with timeout to prevent indefinite blocking
+            while True:
+                # Check if process is still running (do this BEFORE select to catch dead processes)
+                poll_result = proc.poll()
+                if poll_result is not None:
+                    # Process has exited, read remaining output
+                    print(f"[God] Process exited with code {poll_result}")
+                    try:
+                        remaining = proc.stdout.read()
+                        if remaining:
+                            for line in remaining.splitlines():
+                                line = line.rstrip('\n')
+                                if line:
+                                    print(f"  [God/CC] {line}")
+                                    output_lines.append(line)
+                    except:
+                        pass
+                    break
+    
+                # Check timeout
+                if time.time() > deadline:
+                    print(f"[God] Timeout after {GOD_TIMEOUT}s, killing acpx process")
+                    proc.kill()
+                    output_lines.append("(killed: timeout)")
+                    try:
+                        proc.wait(timeout=5)
+                    except:
+                        proc.terminate()
+                    break
+    
+                # Detect stall: if no output for 60 seconds, process might be dead but poll() hasn't caught it
+                if time.time() - _last_output_time > 60:
+                    _no_output_stall_count += 1
+                    print(f"[God] Stall detected: no output for {int(time.time() - _last_output_time)}s (stall {_no_output_stall_count}/3)")
+                    if _no_output_stall_count >= 3:
+                        print(f"[God] Process appears dead (no output for 180s), killing and moving on")
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=5)
+                        except:
+                            pass
+                        output_lines.append("(killed: stall - no output for 180s)")
+                        break
+                else:
+                    _no_output_stall_count = 0
+    
+                # Heartbeat every 30 seconds to show system is alive
+                if time.time() - _god_heartbeat >= 30:
+                    elapsed = int(time.time() - (deadline - GOD_TIMEOUT))
+                    print(f"[God] Still analyzing... ({elapsed}s elapsed, {int(deadline - time.time())}s until timeout)")
+                    _god_heartbeat = time.time()
+    
+                # Read one line with a small timeout to prevent blocking
+                import select
+                import sys as _sys
+                try:
+                    # Use select to check if data is available (Unix only)
+                    if hasattr(select, 'select'):
+                        ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+                        if ready:
+                            line = proc.stdout.readline()
+                            if line:
+                                line = line.rstrip('\n')
+                                print(f"  [God/CC] {line}")
+                                output_lines.append(line)
+                                _last_output_time = time.time()
+                            else:
+                                # EOF reached
+                                break
+                        # else: no data ready, continue loop
+                    else:
+                        # Fallback: readline with timeout (Windows/non-Unix)
+                        line = proc.stdout.readline()
+                        if line:
+                            line = line.rstrip('\n')
+                            print(f"  [God/CC] {line}")
+                            output_lines.append(line)
+                            _last_output_time = time.time()
+                        else:
+                            # No data, check if process is done
+                            time.sleep(0.1)
+                except Exception as read_err:
+                    print(f"[God] Error reading output: {read_err}")
+                    break
+    
+            output = '\n'.join(output_lines)
+            if not output.strip():
+                output = "(no output)"
+        except FileNotFoundError:
+            output = "acpx CLI not found. Is acpx@latest installed?"
+            print(f"[God] ERROR: acpx CLI not found")
+        except Exception as e:
+            output = f"God's ACP Claude Code failed: {e}"
+            print(f"[God] ERROR: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
-        ts_end = datetime.datetime.utcnow().strftime("%H:%M")
-        entry_end = {"speaker": "God", "time": ts_end, "text": msg_en, "text_zh": msg_zh}
-        history.append(entry_end)
-        set_bubble(HOME, msg_en[:200], msg_zh[:200])
-        post_chatlog(history)
-        persist_turn("God", turn_count, msg_en, msg_zh, [], workflow_state, child_state["stage"])
-        print(f"[God] Posted fix: {msg_en}")
-    else:
-        # No changes — silent, just log locally
-        print(f"[God] No changes needed, staying silent.")
+        elapsed = time.time() - t0
+        print(f"[God] Analysis complete ({elapsed:.1f}s, {len(output)} chars)")
+    
+        # 6. Check if God pushed changes
+        try:
+            head_after = subprocess.run(
+                "git log --oneline -1", shell=True, cwd=GOD_WORK_DIR,
+                capture_output=True, text=True
+            ).stdout.strip()
+            god_pushed = head_after != _god_head_before and "god:" in head_after.lower()
+        except Exception:
+            god_pushed = False
+    
+        # 7. Only post to chatlog if God made changes
+        if god_pushed:
+            # Parse [PROBLEM] and [FIX] from output
+            problem_match = re.search(r'\[PROBLEM\]\s*(.+)', output)
+            fix_match = re.search(r'\[FIX\]\s*(.+)', output)
+    
+            problem_text = problem_match.group(1).strip() if problem_match else ""
+            fix_text = fix_match.group(1).strip() if fix_match else ""
+    
+            if problem_text and fix_text:
+                msg_en = f"Found issue: {problem_text}. Fixed: {fix_text}. System will restart shortly."
+                msg_zh = msg_en  # God speaks in English for now
+            elif fix_text:
+                msg_en = f"Fixed: {fix_text}. System will restart shortly."
+                msg_zh = msg_en
+            else:
+                # Fallback: use last non-empty lines
+                non_empty = [l for l in output_lines if l.strip()] if output_lines else []
+                fallback = non_empty[-1] if non_empty else "Applied a fix."
+                msg_en = f"{fallback} System will restart shortly."
+                msg_zh = msg_en
+    
+            ts_end = datetime.datetime.utcnow().strftime("%H:%M")
+            entry_end = {"speaker": "God", "time": ts_end, "text": msg_en, "text_zh": msg_zh}
+            history.append(entry_end)
+            set_bubble(HOME, msg_en[:200], msg_zh[:200])
+            post_chatlog(history)
+            persist_turn("God", turn_count, msg_en, msg_zh, [], workflow_state, child_state["stage"])
+            print(f"[God] Posted fix: {msg_en}")
+        else:
+            # No changes — silent, just log locally
+            print(f"[God] No changes needed, staying silent.")
+    finally:
+        # Always clear the running flag, even if an exception occurred
+        _god_running = False
+        _last_god_time = time.time()  # Update timestamp at the END, not start
 
 
 _last_god_time = 0.0  # timestamp of last God run
+_god_running = False  # flag to track if God is currently running
 
 # Main loop: Adam → Eve → Adam → Eve → ... with God every 2 minutes
+print("[LOOP] Entering main conversation loop...", flush=True)
+iteration = 0
+_last_heartbeat = time.time()
 while True:
+    iteration += 1
+    if iteration % 10 == 1:
+        print(f"[LOOP] Main loop iteration #{iteration} at {datetime.datetime.utcnow().strftime('%H:%M:%S')} UTC", flush=True)
+    # Log heartbeat every 2 minutes so we can detect if loop is stuck
+    if time.time() - _last_heartbeat >= 120:
+        print(f"[LOOP] Heartbeat: iteration {iteration}, CC running={cc_status['running']}, discussion_loop={_discussion_loop_count}, time={datetime.datetime.utcnow().strftime('%H:%M:%S')} UTC", flush=True)
+        _last_heartbeat = time.time()
+
     # Refresh Cain's stage periodically
     try:
         info = hf_api.space_info(CHILD_SPACE_ID)
@@ -1602,6 +2353,12 @@ while True:
             _context_cache.clear()
     except Exception as e:
         print(f"[STATUS] Error: {e}")
+
+    # Check Adam/Eve health and restart if needed
+    try:
+        check_and_restart_unhealthy_agents()
+    except Exception as e:
+        print(f"[A2A-HEALTH] Error checking health: {e}", file=sys.stderr)
 
     # Eve's turn with error handling to prevent loop crash
     try:
@@ -1626,9 +2383,24 @@ while True:
         traceback.print_exc(file=sys.stderr)
     time.sleep(wait)
 
+    # RECOVERY: If BOTH agents are skipped (10+ failures each), reset their failure counters
+    # This allows recovery when Spaces restart after a crash. Without this, the conversation
+    # loop enters permanent deadlock with no agent able to respond.
+    # Note: _a2a_health is already a module-level global, no 'global' declaration needed here
+    if _a2a_health["adam"]["failures"] >= 10 and _a2a_health["eve"]["failures"] >= 10:
+        print(f"[RECOVERY] Both agents have 10+ failures (adam={_a2a_health['adam']['failures']}, eve={_a2a_health['eve']['failures']}). Resetting failure counters to allow recovery after Space restarts.")
+        _a2a_health["adam"]["failures"] = 0
+        _a2a_health["eve"]["failures"] = 0
+        # If CC is idle and Cain exists, force a diagnostic task to break the deadlock
+        if not cc_status["running"] and child_state["created"]:
+            print(f"[RECOVERY] Forcing diagnostic task to break communication deadlock")
+            ctx = gather_context()
+            forced_task = "Emergency diagnostic: A2A communication is failing. Check Cain's health, logs, and state. List any errors and suggest fixes."
+            cc_submit_task(forced_task, "RECOVERY", ctx)
+
     # God runs every GOD_POLL_INTERVAL seconds (2 minutes)
-    if time.time() - _last_god_time >= GOD_POLL_INTERVAL:
-        _last_god_time = time.time()
+    # Only start if not already running (prevent overlapping runs)
+    if time.time() - _last_god_time >= GOD_POLL_INTERVAL and not _god_running:
         try:
             do_god_turn()
         except Exception as e:
