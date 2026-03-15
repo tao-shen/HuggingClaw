@@ -1663,13 +1663,14 @@ def parse_and_execute_turn(raw_text, ctx):
         elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
             results.append({"action": "task", "result": f"BLOCKED: Cain is {child_state['stage']}. Wait for it to finish."})
         elif cc_status["running"]:
-            # LOW-PUSH-FREQUENCY EMERGENCY: If push frequency is critically low and task has been running 60s+, allow task handoff
+            # LOW-PUSH-FREQUENCY EMERGENCY: If push frequency is critically low and task has been running 40s+, allow task handoff
             # This prevents all-talk-no-action when agents get stuck after 1 push
+            # Allow ANY agent to terminate stuck tasks, not just the task owner
             global _push_count, _turns_since_last_push, _push_count_this_task
             task_elapsed = time.time() - cc_status["started"] if cc_status["running"] else 0
-            # Auto-terminate if: (0 pushes in this task and 90s elapsed) OR (<=1 push and 10+ turns since last push and 60s elapsed)
-            should_terminate = (_push_count_this_task == 0 and task_elapsed > 90) or \
-                             (_push_count_this_task <= 1 and _turns_since_last_push >= 10 and task_elapsed > 60)
+            # Auto-terminate if: (0 pushes in this task and 45s elapsed) OR (<=1 push and 5+ turns since last push and 40s elapsed)
+            should_terminate = (_push_count_this_task == 0 and task_elapsed > 45) or \
+                             (_push_count_this_task <= 1 and _turns_since_last_push >= 5 and task_elapsed > 40)
             if should_terminate:
                 # Auto-terminate the stuck task and allow the new one
                 print(f"[LOW-PUSH-FREQ] Auto-terminating stuck task ({task_elapsed:.0f}s old, {_push_count_this_task} pushes this task, {_turns_since_last_push} turns since last push) to allow task handoff.")
@@ -1959,7 +1960,7 @@ def build_turn_message(speaker, other, ctx):
             else:
                 parts.append(f"\n🚨 URGENT: Push frequency is TOO LOW ({_push_count_this_task} pushes THIS TASK, {_turns_since_last_push} turns since last push).")
                 parts.append(f"PLAN your next [TASK] NOW. Be SPECIFIC: file paths, function names, exact changes.")
-        elif cc_elapsed > 120:
+        elif cc_elapsed > 50:
             parts.append(f"\n⚠️ WARNING: CC has been running for {cc_elapsed}s! If output is stale, use [ACTION: terminate_cc] to kill it and re-assign the task.")
         elif _push_count > 0 and _turns_since_last_push >= 5:
             parts.append(f"\n🚨 URGENT: Claude Code is WORKING, but it's been {_turns_since_last_push} turns since last push.")
