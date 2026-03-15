@@ -2758,6 +2758,31 @@ while True:
     except Exception as e:
         print(f"[A2A-HEALTH] Error checking health: {e}", file=sys.stderr)
 
+    # CORRUPTED CONVERSATION RESET: Detect and reset poisoned conversation history
+    # Symptoms: empty messages, messages ending with "-" (cut off), repeated emergency loops
+    # This happens when A2A communication fails partway through, leaving unusable context
+    # Note: history and _discussion_loop_count are module-level globals, no 'global' keyword needed here
+    if history and turn_count >= 3:
+        # Check for corruption patterns
+        has_empty = any(h.get("text", "").strip() == "" for h in history[-2:])
+        has_cutoff = any(h.get("text", "").rstrip().endswith("-") for h in history[-2:])
+        repeated_emergency = sum(1 for h in history[-5:] if "[EMERGENCY LOOP BREAK]" in h.get("text", "")) >= 2
+
+        if has_empty or has_cutoff or repeated_emergency:
+            print(f"[CONV-RESET] Detected corrupted conversation (empty={has_empty}, cutoff={has_cutoff}, repeated_emergency={repeated_emergency}). Resetting history to allow fresh start.")
+            # Keep only the most recent God message (if any) to show continuity
+            god_messages = [h for h in history if h.get("speaker") == "God" and "Found issue" in h.get("text", "")]
+            keep = god_messages[-1:] if god_messages else []
+            history = keep
+            # Clear chatlog on frontend
+            try:
+                post_chatlog(history)
+                print(f"[CONV-RESET] Cleared corrupted chatlog, kept {len(keep)} God message(s)")
+            except Exception as e:
+                print(f"[CONV-RESET] Failed to post cleared chatlog: {e}")
+            # Reset discussion loop counter since we're starting fresh
+            _discussion_loop_count = 0
+
     # UNCONDITIONAL AUTO-TERMINATE: Break deadlock when CC is stuck with 0 pushes
     # This runs EVERY iteration, not just when agents submit tasks (which they can't when CC is stuck!)
     # Prevents infinite discussion loops where agents wait forever for stuck CC
