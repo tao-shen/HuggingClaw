@@ -56,9 +56,9 @@ ADAM_SPACE_ID = "tao-shen/HuggingClaw-Adam"
 EVE_SPACE  = "https://tao-shen-huggingclaw-eve.hf.space"
 EVE_SPACE_ID = "tao-shen/HuggingClaw-Eve"
 GOD_SPACE  = "https://tao-shen-huggingclaw-god.hf.space"
-GOD_POLL_INTERVAL = 120  # God runs every 2 minutes (time-based, not turn-based)
+GOD_POLL_INTERVAL = 300  # God runs every 5 minutes — budget-aware pacing (was 2min)
 GOD_WORK_DIR = "/tmp/god-workspace"
-GOD_TIMEOUT = 600  # 10 minutes for God's Claude Code analysis
+GOD_TIMEOUT = 300  # 5 minutes for God's Claude Code analysis (was 10min)
 HOME_SPACE_ID = "tao-shen/HuggingClaw-Home"
 
 # ── A2A Health Monitoring ─────────────────────────────────────────────────────
@@ -421,8 +421,8 @@ def action_terminate_cc():
 # ── Claude Code Action (THE STAR) ─────────────────────────────────────────────
 
 CLAUDE_WORK_DIR = "/tmp/claude-workspace"
-CLAUDE_TIMEOUT = 300  # 5 minutes (reduced dynamically when push frequency is low)
-TURN_INTERVAL = 15    # seconds between turns — fast enough for lively discussion
+CLAUDE_TIMEOUT = 180  # 3 minutes — shorter tasks, faster iteration (was 5min)
+TURN_INTERVAL = 25    # seconds between turns — budget-aware pacing (was 15s)
 
 # Global acpx session - persistent across all claude_code calls
 GLOBAL_ACPX_DIR = "/tmp/acpx-global-session"
@@ -2287,6 +2287,23 @@ def do_god_turn():
     - Autonomously improve the system
     """
     global last_action_results, _god_running, _last_god_time
+    global _god_last_turn_count, _god_last_child_stage, _god_last_push_count
+
+    # Budget optimization: skip God run if nothing changed since last check
+    # UNLESS child is in error state (always check errors) or it's the first run
+    child_in_error = child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR")
+    nothing_changed = (
+        turn_count == _god_last_turn_count
+        and child_state["stage"] == _god_last_child_stage
+        and _push_count == _god_last_push_count
+    )
+    if nothing_changed and not child_in_error and _god_last_turn_count > 0:
+        print(f"[God] Skipping — no new turns, pushes, or stage changes since last check")
+        return
+
+    _god_last_turn_count = turn_count
+    _god_last_child_stage = child_state["stage"]
+    _god_last_push_count = _push_count
 
     _god_running = True
     try:
@@ -2525,6 +2542,9 @@ def do_god_turn():
 
 _last_god_time = 0.0  # timestamp of last God run
 _god_running = False  # flag to track if God is currently running
+_god_last_turn_count = 0  # turn count at last God run (skip if no new turns)
+_god_last_child_stage = ""  # child stage at last God run (skip if unchanged)
+_god_last_push_count = 0  # push count at last God run
 
 # Initialize push count from existing workspace to persist across restarts
 _init_push_count_from_workspace()
