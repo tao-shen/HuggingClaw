@@ -1650,12 +1650,16 @@ def parse_and_execute_turn(raw_text, ctx):
     task_match = re.search(r'\[TASK\](.*?)\[/TASK\]', raw_text, re.DOTALL)
     if task_match:
         task_desc = task_match.group(1).strip()
+        # Check if this message also contains [ACTION: terminate_cc]
+        # If so, the termination will be processed before task submission (below),
+        # so we should allow this task to proceed even if cc_status["running"] is currently True.
+        has_manual_terminate = re.search(r'\[ACTION:\s*terminate_cc\]', raw_text)
         # task_assigned is set to True ONLY when task is actually submitted, not when blocked
         if not task_desc:
             results.append({"action": "task", "result": "Empty task description."})
         elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING"):
             results.append({"action": "task", "result": f"BLOCKED: Cain is {child_state['stage']}. Wait for it to finish."})
-        elif cc_status["running"]:
+        elif cc_status["running"] and not has_manual_terminate:
             # LOW-PUSH-FREQUENCY EMERGENCY: If push frequency is critically low and task has been running 60s+, allow task handoff
             # This prevents all-talk-no-action when agents get stuck after 1 push
             global _push_count, _turns_since_last_push, _push_count_this_task
@@ -1680,7 +1684,8 @@ def parse_and_execute_turn(raw_text, ctx):
 
         # Task submission block - handles both normal flow and post-zero-push-termination flow
         # Only proceeds if not blocked above (results is empty or only contains termination notice)
-        if (not results or any("terminate_cc" in r.get("action", "") for r in results)) and cc_status["running"] == False:
+        # Also allows submission if this message contains [ACTION: terminate_cc] (manual termination)
+        if (not results or any("terminate_cc" in r.get("action", "") for r in results)) and (cc_status["running"] == False or has_manual_terminate):
             # Check cooldown
             check_and_clear_cooldown()
             if last_rebuild_trigger_at > 0:
