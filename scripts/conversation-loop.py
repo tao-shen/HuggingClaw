@@ -1900,7 +1900,42 @@ def build_turn_message(speaker, other, ctx):
         recent_task_reminder = (last_completed, last_by, last_at)
 
     # Now state-specific guidance
-    if cc_busy and _cc_stale_count >= 2:
+    # CRITICAL: Check child ERROR state FIRST, before cc_busy check
+    # When Cain is broken, agents need aggressive "push now" guidance, not "plan and wait"
+    if child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
+        if cc_status.get("result"):
+            if recent_task_reminder:
+                last_completed, last_by, last_at = recent_task_reminder
+                parts.append(f"\n{CHILD_NAME} has {child_state['stage']}! REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"\nClaude Code JUST FINISHED with a result. FIRST: Review the result carefully to see if it fixes the issue. SECOND: If the fix looks correct, use [ACTION: restart] to restart Cain. ONLY THEN: write a new [TASK]...[/TASK] if the result was incomplete or wrong.")
+        elif cc_busy:
+            # Child in ERROR + CC WORKING = need aggressive action, not "planning"
+            cc_elapsed = int(time.time() - cc_status.get("started", 0)) if cc_status.get("started", 0) > 0 else 0
+            if _push_count_this_task == 0 and cc_elapsed > 20:
+                parts.append(f"\n🚨 CRITICAL: {CHILD_NAME} has {child_state['stage']}! CC has been running {cc_elapsed}s with ZERO pushes!")
+                parts.append(f"CC is STUCK. Use [ACTION: terminate_cc] NOW, then immediately assign a new [TASK].")
+                parts.append(f"🛑 NO discussion. Trial-and-error means RAPID pushes, not waiting for stuck CC.")
+            elif cc_elapsed > 40:
+                parts.append(f"\n🚨 CRITICAL: {CHILD_NAME} has {child_state['stage']}! CC has been running {cc_elapsed}s!")
+                parts.append(f"If output looks stale, use [ACTION: terminate_cc] NOW. Otherwise, have your EXACT [TASK] ready.")
+                parts.append(f"🛑 NO discussion. Your next turn: either terminate CC OR write [TASK] immediately.")
+            else:
+                parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}! CC is working ({cc_elapsed}s).")
+                parts.append(f"🛑 DO NOT discuss architecture. Have your EXACT [TASK] ready: file paths, function names, exact changes.")
+                parts.append(f"When CC finishes: write [TASK] immediately, NO review turn. Trial-and-error > planning.")
+        elif recent_task_reminder:
+            last_completed, last_by, last_at = recent_task_reminder
+            parts.append(f"\n{CHILD_NAME} has {child_state['stage']}!")
+            parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
+            parts.append(f"FIRST: Review whether that fix actually worked. SECOND: If the fix was correct, use [ACTION: restart] to apply it. THIRD: Only write a new [TASK]...[/TASK] if the previous fix was incomplete or wrong.")
+        else:
+            parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}!")
+            parts.append(f"\n🔴 CRITICAL: Focus ONLY on fixing this {child_state['stage']}.")
+            parts.append(f"- DO NOT work on features, enhancements, or cosmetic changes.")
+            parts.append(f"- ONLY push fixes that address the error itself.")
+            parts.append(f"- Trial-and-error is GOOD — push a fix attempt, don't deliberate.")
+            parts.append(f"Pushes so far: {_push_count} total, {_push_count_this_task} this task. Turns since last push: {_turns_since_last_push}. PUSH MORE.")
+    elif cc_busy and _cc_stale_count >= 2:
         parts.append(f"\nClaude Code is WORKING but no new output. PLAN your next [TASK] concretely — what exact changes will you assign?")
         parts.append(f"DO NOT discuss. Write specific file paths and function names for your next task.")
     elif cc_busy:
@@ -1951,24 +1986,6 @@ def build_turn_message(speaker, other, ctx):
             last_completed, last_by, last_at = recent_task_reminder
             parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
             parts.append(f"When cooldown ends, FIRST review whether that fix worked before writing a new [TASK].")
-    elif child_state["stage"] in ("RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR"):
-        if cc_status.get("result"):
-            if recent_task_reminder:
-                last_completed, last_by, last_at = recent_task_reminder
-                parts.append(f"\n{CHILD_NAME} has {child_state['stage']}! REMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
-            parts.append(f"\nClaude Code JUST FINISHED with a result. FIRST: Review the result carefully to see if it fixes the issue. SECOND: If the fix looks correct, use [ACTION: restart] to restart Cain. ONLY THEN: write a new [TASK]...[/TASK] if the result was incomplete or wrong.")
-        elif recent_task_reminder:
-            last_completed, last_by, last_at = recent_task_reminder
-            parts.append(f"\n{CHILD_NAME} has {child_state['stage']}!")
-            parts.append(f"\nREMEMBER: {last_by} just completed '{last_completed}' ({int(time.time() - last_at)}s ago).")
-            parts.append(f"FIRST: Review whether that fix actually worked. SECOND: If the fix was correct, use [ACTION: restart] to apply it. THIRD: Only write a new [TASK]...[/TASK] if the previous fix was incomplete or wrong.")
-        else:
-            parts.append(f"\n🚨 {CHILD_NAME} has {child_state['stage']}!")
-            parts.append(f"\n🔴 CRITICAL: Focus ONLY on fixing this {child_state['stage']}.")
-            parts.append(f"- DO NOT work on features, enhancements, or cosmetic changes.")
-            parts.append(f"- ONLY push fixes that address the error itself.")
-            parts.append(f"- Trial-and-error is GOOD — push a fix attempt, don't deliberate.")
-            parts.append(f"Pushes so far: {_push_count} total, {_push_count_this_task} this task. Turns since last push: {_turns_since_last_push}. PUSH MORE.")
     elif child_state["alive"] and cc_status.get("result"):
         if recent_task_reminder:
             last_completed, last_by, last_at = recent_task_reminder
