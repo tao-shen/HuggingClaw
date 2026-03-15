@@ -1896,21 +1896,23 @@ def build_turn_message(speaker, other, ctx):
 
     # Now state-specific guidance
     if cc_busy and _cc_stale_count >= 2:
-        parts.append(f"\nClaude Code is WORKING but no new output. Discuss plans with {other} instead.")
+        parts.append(f"\nClaude Code is WORKING but no new output. PLAN your next [TASK] concretely — what exact changes will you assign?")
+        parts.append(f"DO NOT discuss. Write specific file paths and function names for your next task.")
     elif cc_busy:
         # CRITICAL: Check if push frequency is dangerously low (0 or very few pushes)
         cc_elapsed = int(time.time() - cc_status.get("started", 0)) if cc_status.get("started", 0) > 0 else 0
         if _push_count_this_task == 0 and _turns_since_last_push >= 1:
-            # CRITICAL TIMEOUT: Lower threshold (90s) when zero pushes THIS TASK - CC might be stuck
-            if cc_elapsed > 90:
+            # CRITICAL TIMEOUT: Lower threshold (30s) when zero pushes THIS TASK - CC might be stuck
+            # Faster escalation prevents discussion loops
+            if cc_elapsed > 30:
                 parts.append(f"\n🚨 CRITICAL: Claude Code has been running for {cc_elapsed}s with ZERO pushes THIS TASK!")
                 parts.append(f"CC might be STUCK. If output looks stale, use [ACTION: terminate_cc] NOW to kill it and re-assign.")
                 parts.append(f"Do NOT keep waiting. Trial-and-error requires PUSHING code, not watching stuck processes.")
+                parts.append(f"🛑 DO NOT DISCUSS. This is your ONLY warning - PLAN concrete work NOW.")
             else:
                 parts.append(f"\n🚨 CRITICAL: Claude Code is WORKING, but ZERO pushes THIS TASK so far!")
-                parts.append(f"STOP 'standing by' and 'monitoring'. PLAN your next [TASK] NOW.")
-                parts.append(f"Write down exactly what [TASK] you will assign when CC finishes.")
-                parts.append(f"Trial-and-error requires PUSHING code, not waiting.")
+                parts.append(f"🛑 DO NOT DISCUSS. Write down exactly what [TASK] you will assign when CC finishes.")
+                parts.append(f"Be SPECIFIC: file paths, function names, exact changes. Trial-and-error requires PUSHING code.")
         elif (_push_count_this_task <= 1 and _turns_since_last_push >= 5) or (_push_count_this_task > 1 and _turns_since_last_push >= 10):
             # LOW PUSH FREQUENCY WARNING: Catches the "1 push then 62 turns of discussion" anti-pattern
             if cc_elapsed > 60:
@@ -1926,8 +1928,8 @@ def build_turn_message(speaker, other, ctx):
             parts.append(f"\n🚨 URGENT: Claude Code is WORKING, but it's been {_turns_since_last_push} turns since last push.")
             parts.append(f"DO NOT just discuss. PLAN your next [TASK] NOW so you can push immediately when CC finishes.")
         else:
-            parts.append(f"\nClaude Code is WORKING. PLAN your next move with {other} — what [TASK] will you assign next?")
-            parts.append(f"DO NOT just say 'standing by' or 'monitoring'. Be productive — plan concrete work.")
+            parts.append(f"\nClaude Code is WORKING. PLAN your next [TASK] — write down specific changes: file paths, function names.")
+            parts.append(f"DO NOT discuss architecture or theory. PLAN concrete work only — what exact [TASK] will you assign when CC finishes?")
     elif child_state["stage"] in ("BUILDING", "RESTARTING", "APP_STARTING", "RUNNING_APP_STARTING"):
         # Check cooldown and inform agents
         check_and_clear_cooldown()
