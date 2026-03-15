@@ -754,7 +754,16 @@ def action_claude_code(task):
         return "Failed to prepare workspace."
     _write_claude_md(CLAUDE_WORK_DIR, role="worker")
 
-    # 1.5. Ensure acpx session exists
+    # 1.5. Capture HEAD before running Claude Code (to detect pushes made by CC itself)
+    try:
+        head_before = subprocess.run(
+            "git log --oneline -1",
+            shell=True, cwd=CLAUDE_WORK_DIR, capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except Exception:
+        head_before = ""
+
+    # 1.6. Ensure acpx session exists
     if not _ensure_acpx_session(CLAUDE_WORK_DIR):
         return "Failed to create acpx session."
 
@@ -829,15 +838,33 @@ def action_claude_code(task):
     print(f"[ACP/CLAUDE] Done ({len(output)} chars, exit={proc.returncode})")
 
     # 3. Push changes back to Cain's Space
+    # Also check if Claude Code itself made a push (by checking if HEAD changed)
     try:
         status_out = subprocess.run(
             "git status --porcelain",
             shell=True, cwd=CLAUDE_WORK_DIR, capture_output=True, text=True
         ).stdout.strip()
 
-        if not status_out:
+        # Check if Claude Code itself pushed (HEAD changed)
+        head_after = subprocess.run(
+            "git log --oneline -1",
+            shell=True, cwd=CLAUDE_WORK_DIR, capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+        cc_pushed = head_before and head_after and head_before != head_after
+
+        if not status_out and not cc_pushed:
             push_result = "No files changed."
+        elif cc_pushed and not status_out:
+            # Claude Code pushed, but no local changes remain (CC handled everything)
+            push_result = f"Claude Code pushed: {head_after}"
+            _pending_cooldown = True
+            _push_count += 1
+            _push_count_this_task += 1
+            _last_push_time = time.time()
+            _turns_since_last_push = 0
+            print(f"[CLAUDE-CODE] CC pushed (#{_push_count}): {head_after}")
         else:
+            # Local changes exist - push them ourselves
             subprocess.run("git add -A", shell=True, cwd=CLAUDE_WORK_DIR,
                           capture_output=True, check=True)
             msg = task[:72].replace('"', '\\"')
@@ -848,7 +875,7 @@ def action_claude_code(task):
             push_result = f"Pushed changes:\n{status_out}"
             _pending_cooldown = True
             _push_count += 1
-            _push_count_this_task += 1  # Track pushes in current task
+            _push_count_this_task += 1
             _last_push_time = time.time()
             _turns_since_last_push = 0
             print(f"[CLAUDE-CODE] Pushed (#{_push_count}): {status_out}")
