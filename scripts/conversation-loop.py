@@ -604,9 +604,9 @@ $ARGUMENTS — The specific diagnosis/problem to fix
 3. Validate: python3 -c "import py_compile; py_compile.compile('scripts/conversation-loop.py', doraise=True)"
 4. Commit: git commit -m "god: <brief description>"
 5. Push: git push
-6. End output with:
-   [PROBLEM] <what the problem was>
-   [FIX] <what you changed>
+6. End output with (plain text, no markdown):
+   [PROBLEM] what the problem was
+   [FIX] what you changed
 
 ## Rules
 - ONLY modify scripts/conversation-loop.py
@@ -2655,8 +2655,8 @@ def do_god_turn():
             problem_match = re.search(r'\[PROBLEM\]\s*(.+)', output)
             fix_match = re.search(r'\[FIX\]\s*(.+)', output)
 
-            problem_text = problem_match.group(1).strip() if problem_match else ""
-            fix_text = fix_match.group(1).strip() if fix_match else ""
+            problem_text = problem_match.group(1).strip().strip("*").strip() if problem_match else ""
+            fix_text = fix_match.group(1).strip().strip("*").strip() if fix_match else ""
 
             if problem_text and fix_text:
                 msg_en = f"Found issue: {problem_text}. Fixed: {fix_text}. System will restart shortly."
